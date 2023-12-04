@@ -134,6 +134,9 @@ import org.opensearch.ml.engine.encryptor.Encryptor;
 import org.opensearch.ml.engine.encryptor.EncryptorImpl;
 import org.opensearch.ml.engine.indices.MLIndicesHandler;
 import org.opensearch.ml.engine.indices.MLInputDatasetHandler;
+import org.opensearch.ml.engine.memory.ConversationIndexMemory;
+import org.opensearch.ml.engine.memory.MLMemoryManager;
+import org.opensearch.ml.engine.tools.*;
 import org.opensearch.ml.helper.ConnectorAccessControlHelper;
 import org.opensearch.ml.helper.ModelAccessControlHelper;
 import org.opensearch.ml.memory.ConversationalMemoryHandler;
@@ -478,6 +481,44 @@ public class MachineLearningPlugin extends Plugin implements ActionPlugin, Searc
 
         // Register thread-safe ML objects here.
         LocalSampleCalculator localSampleCalculator = new LocalSampleCalculator(client, settings);
+
+        toolFactories = new HashMap<>();
+
+        MLModelTool.Factory.getInstance().init(client);
+        MathTool.Factory.getInstance().init(scriptService);
+        VectorDBTool.Factory.getInstance().init(client, xContentRegistry);
+        NeuralSparseTool.Factory.getInstance().init(client, xContentRegistry);
+        AgentTool.Factory.getInstance().init(client);
+        CatIndexTool.Factory.getInstance().init(client, clusterService);
+        PainlessScriptTool.Factory.getInstance().init(client, scriptService);
+        VisualizationsTool.Factory.getInstance().init(client);
+        toolFactories.put(MLModelTool.TYPE, MLModelTool.Factory.getInstance());
+        toolFactories.put(MathTool.TYPE, MathTool.Factory.getInstance());
+        toolFactories.put(VectorDBTool.TYPE, VectorDBTool.Factory.getInstance());
+        toolFactories.put(NeuralSparseTool.TYPE, NeuralSparseTool.Factory.getInstance());
+        toolFactories.put(AgentTool.TYPE, AgentTool.Factory.getInstance());
+        toolFactories.put(CatIndexTool.TYPE, CatIndexTool.Factory.getInstance());
+        toolFactories.put(PainlessScriptTool.TYPE, PainlessScriptTool.Factory.getInstance());
+        toolFactories.put(VisualizationsTool.TYPE, VisualizationsTool.Factory.getInstance());
+
+        if (externalToolFactories != null) {
+            toolFactories.putAll(externalToolFactories);
+        }
+
+        MLMemoryManager memoryManager = new MLMemoryManager(client, clusterService, new ConversationMetaIndex(client, clusterService));
+        Map<String, Memory.Factory> memoryFactoryMap = new HashMap<>();
+        ConversationIndexMemory.Factory conversationIndexMemoryFactory = new ConversationIndexMemory.Factory();
+        conversationIndexMemoryFactory.init(client, mlIndicesHandler, memoryManager);
+        memoryFactoryMap.put(ConversationIndexMemory.TYPE, conversationIndexMemoryFactory);
+
+        MLAgentExecutor agentExecutor = new MLAgentExecutor(
+            client,
+            settings,
+            clusterService,
+            xContentRegistry,
+            toolFactories,
+            memoryFactoryMap
+        );
         MLEngineClassLoader.register(FunctionName.LOCAL_SAMPLE_CALCULATOR, localSampleCalculator);
 
         AnomalyLocalizerImpl anomalyLocalizer = new AnomalyLocalizerImpl(client, settings, clusterService, indexNameExpressionResolver);
