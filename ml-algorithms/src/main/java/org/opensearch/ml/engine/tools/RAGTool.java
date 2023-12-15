@@ -10,8 +10,8 @@ import static org.opensearch.ml.common.utils.StringUtils.gson;
 
 import java.io.IOException;
 import java.security.AccessController;
-import java.security.PrivilegedActionException;
 import java.security.PrivilegedExceptionAction;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -54,7 +54,7 @@ import lombok.extern.log4j.Log4j2;
 @ToolAnnotation(RAGTool.TYPE)
 public class RAGTool extends AbstractRetrieverTool {
     public static final String TYPE = "RAGTool";
-    private static String DEFAULT_DESCRIPTION = "Use this tool to run any model.";
+    public static String DEFAULT_DESCRIPTION = "Use this tool to run any model.";
     public static final String MODEL_ID_FIELD = "model_id";
     public static final String EMBEDDING_MODEL_ID_FIELD = "embedding_model_id";
     public static final String EMBEDDING_FIELD = "embedding_field";
@@ -63,7 +63,6 @@ public class RAGTool extends AbstractRetrieverTool {
     private String description = DEFAULT_DESCRIPTION;
     private Client client;
     private String modelId;
-
     private NamedXContentRegistry xContentRegistry;
     private String index;
     private String embeddingField;
@@ -71,6 +70,7 @@ public class RAGTool extends AbstractRetrieverTool {
     private String embeddingModelId;
     private Integer docSize;
     private Integer k;
+    private String defaultQuery;
     @Setter
     private Parser inputParser;
     @Setter
@@ -110,7 +110,7 @@ public class RAGTool extends AbstractRetrieverTool {
 
     @Override
     protected String getQueryBody(String queryText) {
-        if (StringUtils.isBlank(embeddingField) || StringUtils.isBlank(embeddingModelId)) {
+        if (StringUtils.isBlank(embeddingField) || StringUtils.isBlank(embeddingModelId) || StringUtils.isBlank(modelId)) {
             throw new IllegalArgumentException(
                 "Parameter [" + EMBEDDING_FIELD + "] and [" + EMBEDDING_MODEL_ID_FIELD + "] can not be null or empty."
             );
@@ -127,19 +127,27 @@ public class RAGTool extends AbstractRetrieverTool {
             + " }";
     }
 
+    protected String parseQueryFromInput(Map<String, String> parameters) {
+
+        String question = parameters.get(INPUT_FIELD);
+        try {
+            question = gson.fromJson(question, String.class);
+        } catch (Exception e) {
+            // throw new IllegalArgumentException("wrong input");
+        }
+        if (StringUtils.isBlank(question)) {
+            throw new IllegalArgumentException("[" + INPUT_FIELD + "] is null or empty, can not process it.");
+        }
+        return getQueryBody(question);
+
+    }
+
     @Override
     public <T> void run(Map<String, String> parameters, ActionListener<T> listener) {
         try {
-            String question = parameters.get(INPUT_FIELD);
-            try {
-                question = gson.fromJson(question, String.class);
-            } catch (Exception e) {
-                // throw new IllegalArgumentException("wrong input");
-            }
-            String query = getQueryBody(question);
-            if (StringUtils.isBlank(query)) {
-                throw new IllegalArgumentException("[" + INPUT_FIELD + "] is null or empty, can not process it.");
-            }
+
+            String query = (this.defaultQuery == null) ? parseQueryFromInput(parameters) : this.defaultQuery;
+
             SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
             XContentParser queryParser = XContentType.JSON
                 .xContent()
@@ -178,12 +186,12 @@ public class RAGTool extends AbstractRetrieverTool {
                     Object response = tensors.getMlModelTensors().get(0).getDataAsMap().get("response");
                     tmpParameters.put(OUTPUT_FIELD, response + "");
                 } else if (vectorDBToolOutput instanceof ModelTensor) {
-                    tmpParameters.put(OUTPUT_FIELD, escapeJson(toJson(((ModelTensor) vectorDBToolOutput).getDataAsMap())));
+                    tmpParameters.put(OUTPUT_FIELD, escapeJson(gson.toJson(((ModelTensor) vectorDBToolOutput).getDataAsMap())));
                 } else {
                     if (vectorDBToolOutput instanceof String) {
                         tmpParameters.put(OUTPUT_FIELD, (String) vectorDBToolOutput);
                     } else {
-                        tmpParameters.put(OUTPUT_FIELD, escapeJson(toJson(vectorDBToolOutput.toString())));
+                        tmpParameters.put(OUTPUT_FIELD, escapeJson(gson.toJson(vectorDBToolOutput.toString())));
                     }
                 }
 
@@ -196,7 +204,7 @@ public class RAGTool extends AbstractRetrieverTool {
                     ModelTensorOutput modelTensorOutput = (ModelTensorOutput) resp.getOutput();
                     modelTensorOutput.getMlModelOutputs();
                     if (outputParser == null) {
-                        listener.onResponse((T) modelTensorOutput.getMlModelOutputs());
+                        listener.onResponse((T) ModelTensorOutput.builder().mlModelOutputs(Arrays.asList()).build());
                     } else {
                         listener.onResponse((T) outputParser.parse(modelTensorOutput.getMlModelOutputs()));
                     }
@@ -287,23 +295,6 @@ public class RAGTool extends AbstractRetrieverTool {
         public String getDefaultDescription() {
             return DEFAULT_DESCRIPTION;
         }
-    }
 
-    private String toJson(Object value) {
-        return getString(value);
-    }
-
-    public static String getString(Object value) {
-        try {
-            return AccessController.doPrivileged((PrivilegedExceptionAction<String>) () -> {
-                if (value instanceof String) {
-                    return (String) value;
-                } else {
-                    return gson.toJson(value);
-                }
-            });
-        } catch (PrivilegedActionException e) {
-            throw new RuntimeException(e);
-        }
     }
 }

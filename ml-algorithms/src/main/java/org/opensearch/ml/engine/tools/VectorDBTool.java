@@ -34,6 +34,7 @@ public class VectorDBTool extends AbstractRetrieverTool {
     private Integer k;
     private String modelId;
     private String embeddingField;
+    private String defaultQuery;
 
     @Builder
     public VectorDBTool(
