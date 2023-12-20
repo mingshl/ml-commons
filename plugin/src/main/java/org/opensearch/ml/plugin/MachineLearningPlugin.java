@@ -135,8 +135,6 @@ import org.opensearch.ml.engine.encryptor.Encryptor;
 import org.opensearch.ml.engine.encryptor.EncryptorImpl;
 import org.opensearch.ml.engine.indices.MLIndicesHandler;
 import org.opensearch.ml.engine.indices.MLInputDatasetHandler;
-import org.opensearch.ml.engine.memory.ConversationIndexMemory;
-import org.opensearch.ml.engine.memory.MLMemoryManager;
 import org.opensearch.ml.engine.tools.*;
 import org.opensearch.ml.helper.ConnectorAccessControlHelper;
 import org.opensearch.ml.helper.ModelAccessControlHelper;
@@ -165,7 +163,6 @@ import org.opensearch.ml.memory.action.conversation.UpdateConversationAction;
 import org.opensearch.ml.memory.action.conversation.UpdateConversationTransportAction;
 import org.opensearch.ml.memory.action.conversation.UpdateInteractionAction;
 import org.opensearch.ml.memory.action.conversation.UpdateInteractionTransportAction;
-import org.opensearch.ml.memory.index.ConversationMetaIndex;
 import org.opensearch.ml.memory.index.OpenSearchConversationalMemoryHandler;
 import org.opensearch.ml.model.MLModelCacheHelper;
 import org.opensearch.ml.model.MLModelManager;
@@ -301,7 +298,6 @@ public class MachineLearningPlugin extends Plugin implements ActionPlugin, Searc
     private Map<String, Tool.Factory> toolFactories;
     private ScriptService scriptService;
     private Encryptor encryptor;
-
 
     @Override
     public List<ActionHandler<? extends ActionRequest, ? extends ActionResponse>> getActions() {

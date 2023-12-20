@@ -14,6 +14,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.logging.log4j.util.Strings;
 import org.opensearch.action.search.SearchRequest;
 import org.opensearch.action.search.SearchResponse;
 import org.opensearch.client.Client;
@@ -130,7 +131,7 @@ public abstract class AbstractRetrieverTool implements Tool {
             return false;
         }
         String question = parameters.get("input");
-        return question != null;
+        return question != null && !Strings.isBlank(question);
     }
 
     public void setClient(Client client) {

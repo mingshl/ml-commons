@@ -1,12 +1,11 @@
 package org.opensearch.ml.engine.tools;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 import static org.opensearch.ml.common.utils.StringUtils.gson;
+import static org.opensearch.ml.engine.tools.AbstractRetrieverTool.DEFAULT_DESCRIPTION;
+import static org.opensearch.ml.engine.tools.AbstractRetrieverTool.INPUT_FIELD;
 
 import java.io.InputStream;
 import java.util.List;
@@ -15,6 +14,7 @@ import java.util.concurrent.CompletableFuture;
 
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.opensearch.action.search.SearchRequest;
 import org.opensearch.action.search.SearchResponse;
@@ -24,6 +24,7 @@ import org.opensearch.common.xcontent.json.JsonXContent;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.xcontent.DeprecationHandler;
 import org.opensearch.core.xcontent.NamedXContentRegistry;
+import org.opensearch.ml.common.spi.tools.Tool;
 import org.opensearch.search.SearchModule;
 
 import lombok.SneakyThrows;
@@ -67,6 +68,28 @@ public class AbstractRetrieverToolTests {
     }
 
     @Test
+    public void testValidate() {
+        assertFalse(mockedImpl.validate(null));
+        assertFalse(mockedImpl.validate(Map.of()));
+        assertFalse(mockedImpl.validate(Map.of(INPUT_FIELD, "")));
+        assertTrue(mockedImpl.validate(Map.of(INPUT_FIELD, "text")));
+    }
+
+    @Test
+    public void testGetAttributes() {
+        assertEquals(mockedImpl.getVersion(), null);
+        assertEquals(mockedImpl.getIndex(), TEST_INDEX);
+        assertEquals(mockedImpl.getDocSize(), TEST_DOC_SIZE);
+        assertEquals(mockedImpl.getSourceFields(), TEST_SOURCE_FIELDS);
+        assertEquals(mockedImpl.getQueryBody(TEST_QUERY), TEST_QUERY);
+    }
+
+    @Test
+    public void testGetQueryBodySuccess() {
+        assertEquals(mockedImpl.getQueryBody(TEST_QUERY), TEST_QUERY);
+    }
+
+    @Test
     @SneakyThrows
     public void testRunAsyncWithSearchResults() {
         Client client = mock(Client.class);
@@ -87,7 +110,7 @@ public class AbstractRetrieverToolTests {
         final CompletableFuture<String> future = new CompletableFuture<>();
         ActionListener<String> listener = ActionListener.wrap(r -> { future.complete(r); }, e -> { future.completeExceptionally(e); });
 
-        mockedImpl.run(Map.of(AbstractRetrieverTool.INPUT_FIELD, "hello world"), listener);
+        mockedImpl.run(Map.of(INPUT_FIELD, "hello world"), listener);
 
         future.join();
         assertEquals(
@@ -118,7 +141,7 @@ public class AbstractRetrieverToolTests {
         final CompletableFuture<String> future = new CompletableFuture<>();
         ActionListener<String> listener = ActionListener.wrap(r -> { future.complete(r); }, e -> { future.completeExceptionally(e); });
 
-        mockedImpl.run(Map.of(AbstractRetrieverTool.INPUT_FIELD, "hello world"), listener);
+        mockedImpl.run(Map.of(INPUT_FIELD, "hello world"), listener);
 
         future.join();
         assertEquals("", future.get());
@@ -133,13 +156,13 @@ public class AbstractRetrieverToolTests {
         assertThrows(
             "[input] is null or empty, can not process it.",
             IllegalArgumentException.class,
-            () -> mockedImpl.run(Map.of(AbstractRetrieverTool.INPUT_FIELD, ""), null)
+            () -> mockedImpl.run(Map.of(INPUT_FIELD, ""), null)
         );
 
         assertThrows(
             "[input] is null or empty, can not process it.",
             IllegalArgumentException.class,
-            () -> mockedImpl.run(Map.of(AbstractRetrieverTool.INPUT_FIELD, "  "), null)
+            () -> mockedImpl.run(Map.of(INPUT_FIELD, "  "), null)
         );
 
         assertThrows(
@@ -147,5 +170,46 @@ public class AbstractRetrieverToolTests {
             IllegalArgumentException.class,
             () -> mockedImpl.run(Map.of("test", "hello world"), null)
         );
+    }
+
+    @Test
+    @SneakyThrows
+    public void testRunWithRuntimeException() {
+        Client client = mock(Client.class);
+        mockedImpl.setClient(client);
+        ActionListener listener = mock(ActionListener.class);
+        doAnswer(invocation -> {
+            SearchRequest searchRequest = invocation.getArgument(0);
+            assertEquals((long) TEST_DOC_SIZE, (long) searchRequest.source().size());
+            ActionListener<SearchResponse> actionListener = invocation.getArgument(1);
+            actionListener.onFailure(new RuntimeException("Failed to search index"));
+            return null;
+        }).when(client).search(any(), any());
+        mockedImpl.run(Map.of(AbstractRetrieverTool.INPUT_FIELD, "hello world"), listener);
+        verify(listener).onFailure(any(RuntimeException.class));
+        ArgumentCaptor<Exception> argumentCaptor = ArgumentCaptor.forClass(Exception.class);
+        verify(listener).onFailure(argumentCaptor.capture());
+        assertEquals("Failed to search index", argumentCaptor.getValue().getMessage());
+    }
+
+    @Test
+    public void testFactory() {
+        // Create a mock object of the abstract Factory class
+        Client client = mock(Client.class);
+        AbstractRetrieverTool.Factory<Tool> factoryMock = new AbstractRetrieverTool.Factory<>() {
+            public AgentTool create(Map<String, Object> params) {
+                return null;
+            }
+        };
+
+        factoryMock.init(client, TEST_XCONTENT_REGISTRY_FOR_QUERY);
+
+        assertNotNull(factoryMock.client);
+        assertNotNull(factoryMock.xContentRegistry);
+        assertEquals(client, factoryMock.client);
+        assertEquals(TEST_XCONTENT_REGISTRY_FOR_QUERY, factoryMock.xContentRegistry);
+
+        String defaultDescription = factoryMock.getDefaultDescription();
+        assertEquals(DEFAULT_DESCRIPTION, defaultDescription);
     }
 }
