@@ -1,3 +1,7 @@
+/*
+ * Copyright OpenSearch Contributors
+ * SPDX-License-Identifier: Apache-2.0
+ */
 package org.opensearch.ml.processor;
 
 import java.util.List;
@@ -12,7 +16,6 @@ class MLModelUtil {
     private final List<Map<String, String>> input_map;
     @Getter
     private final List<Map<String, String>> output_map;
-    // Utility class containing shared parameters and methods for MLModelIngest/SearchProcessors
     @Getter
     protected String model_id;
     @Getter
@@ -30,6 +33,10 @@ class MLModelUtil {
     public static final String OUTPUT_MAP = "output_map";
     public static final String MODEL_CONFIG = "model_config";
     public static final String IGNORE_MISSING = "ignore_missing";
+
+    /**
+     *  Utility class containing shared parameters and methods for MLModelIngest/SearchProcessors
+     *  */
 
     public MLModelUtil(
         String model_id,
