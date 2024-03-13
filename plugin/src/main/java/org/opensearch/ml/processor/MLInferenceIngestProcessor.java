@@ -1,8 +1,17 @@
+/*
+ * Copyright OpenSearch Contributors
+ * SPDX-License-Identifier: Apache-2.0
+ */
 package org.opensearch.ml.processor;
 
+import static org.opensearch.ml.common.utils.StringUtils.gson;
 import static org.opensearch.ml.processor.MLModelUtil.*;
 
-import java.util.*;
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.function.BiConsumer;
 
 import org.opensearch.action.ActionRequest;
@@ -14,26 +23,22 @@ import org.opensearch.ingest.ConfigurationUtils;
 import org.opensearch.ingest.IngestDocument;
 import org.opensearch.ingest.Processor;
 import org.opensearch.ingest.ValueSource;
-import org.opensearch.ml.common.FunctionName;
-import org.opensearch.ml.common.MLModel;
 import org.opensearch.ml.common.output.model.ModelTensorOutput;
 import org.opensearch.ml.common.transport.MLTaskResponse;
 import org.opensearch.ml.common.transport.prediction.MLPredictionTaskAction;
-import org.opensearch.ml.model.MLModelCacheHelper;
 import org.opensearch.script.ScriptService;
 import org.opensearch.script.TemplateScript;
 
-public class MLInferenceProcessor extends AbstractProcessor implements ModelExecutor {
+public class MLInferenceIngestProcessor extends AbstractProcessor implements ModelExecutor {
 
     private final MLModelUtil mlModelUtil;
     private final boolean ignoreMissing;
     private final ScriptService scriptService;
     private static Client client;
-    private final MLModelCacheHelper modelCacheHelper;
     public static final String TYPE = "ml_inference";
     public static final String DEFAULT_OUTPUT_FIELD_NAME = "inference_results";
 
-    protected MLInferenceProcessor(
+    protected MLInferenceIngestProcessor(
         String model_id,
         List<Map<String, String>> input_map,
         List<Map<String, String>> output_map,
@@ -42,34 +47,43 @@ public class MLInferenceProcessor extends AbstractProcessor implements ModelExec
         String description,
         boolean ignoreMissing,
         ScriptService scriptService,
-        Client client,
-        MLModelCacheHelper modelCacheHelper
+        Client client
     ) {
         super(tag, description);
         this.mlModelUtil = new MLModelUtil(model_id, input_map, output_map, model_config);
         this.ignoreMissing = ignoreMissing;
         this.scriptService = scriptService;
         this.client = client;
-        this.modelCacheHelper = modelCacheHelper;
     }
 
+    /**
+     * overwrite in this execute method,
+     * when batch inference is available,
+     * to support async multiple predictions.
+     */
     @Override
     public void execute(IngestDocument ingestDocument, BiConsumer<IngestDocument, Exception> handler) {
 
         List<Map<String, String>> process_input = mlModelUtil.getInput_map();
         List<Map<String, String>> process_output = mlModelUtil.getOutput_map();
-        // TODO handle process_input is null
         int i = 0;
-
         int round = (process_input != null) ? process_input.size() : 0;
 
         process_predictions(ingestDocument, handler, process_input, process_output, i, round);
 
     }
 
+    @Override
+    public IngestDocument execute(IngestDocument ingestDocument) throws Exception {
+        return ingestDocument;
+    }
+
     /**
      * process predictions for one model for multiple rounds of predictions
-     * ingest documents after prediction rounds are completed
+     * ingest documents after prediction rounds are completed,
+     * when no input mappings provided, default to add all fields to model input fields,
+     * when no output mapping provided, default to output as
+     * "inference_results" field (the same format as predict API)
      */
     private void process_predictions(
         IngestDocument ingestDocument,
@@ -82,12 +96,10 @@ public class MLInferenceProcessor extends AbstractProcessor implements ModelExec
         if (i >= round && i != 0) {
             handler.accept(ingestDocument, null);
         } else {
-
             Map<String, String> modelParameters = new HashMap<>();
             if (mlModelUtil.getModel_config() != null) {
                 modelParameters.putAll(mlModelUtil.getModel_config());
             }
-            // TODO handle output mapping is null, default logic
             // when no input mapping is provided, default to read all fields from documents as model input
             if (round == 0) {
                 Set<String> documentFields = ingestDocument.getSourceAndMetadata().keySet();
@@ -97,10 +109,6 @@ public class MLInferenceProcessor extends AbstractProcessor implements ModelExec
 
             } else {
                 Map<String, String> inputMapping = process_input.get(i);
-
-                // Step 1 Mapping input fields.
-                // conduct field mapping from the original documents to known fields for model input
-                // process input
                 for (Map.Entry<String, String> entry : inputMapping.entrySet()) {
                     String originalFieldName = entry.getKey();
                     String ModelInputFieldName = entry.getValue();
@@ -109,8 +117,6 @@ public class MLInferenceProcessor extends AbstractProcessor implements ModelExec
                 }
             }
 
-            // Step 2 //process InputFields and make predictions
-
             ActionRequest request = getRemoteModelInferenceResult(modelParameters, mlModelUtil.getModel_id());
 
             client.execute(MLPredictionTaskAction.INSTANCE, request, new ActionListener<>() {
@@ -118,8 +124,6 @@ public class MLInferenceProcessor extends AbstractProcessor implements ModelExec
                 @Override
                 public void onResponse(MLTaskResponse mlTaskResponse) {
                     ModelTensorOutput modelTensorOutput = (ModelTensorOutput) mlTaskResponse.getOutput();
-
-                    // when no output mapping provided, default to output as "inference_results"
 
                     if (process_output == null || process_output.isEmpty()) {
                         appendFieldValue(modelTensorOutput, null, DEFAULT_OUTPUT_FIELD_NAME, ingestDocument);
@@ -151,7 +155,7 @@ public class MLInferenceProcessor extends AbstractProcessor implements ModelExec
         String ModelInputFieldName
     ) {
         String originalFieldPath = getFieldPath(ingestDocument, originalFieldName);
-        if (originalFieldPath != null ) {
+        if (originalFieldPath != null) {
             Object originalFieldValue = ingestDocument.getFieldValue(originalFieldPath, Object.class);
             String originalFieldValueAsString = getModelInputFieldValue(originalFieldValue);
             modelParameters.put(ModelInputFieldName, originalFieldValueAsString);
@@ -164,12 +168,11 @@ public class MLInferenceProcessor extends AbstractProcessor implements ModelExec
         final boolean fieldPathIsNullOrEmpty = Strings.isNullOrEmpty(originalFieldPath);
         if (fieldPathIsNullOrEmpty || !ingestDocument.hasField(originalFieldPath, true)) {
             if (ignoreMissing) {
-                // TODO refine this logic, now when there is missing field, it skip the field
                 return null;
             } else if (fieldPathIsNullOrEmpty) {
-                throw new IllegalArgumentException("field_map path cannot be null nor empty");
+                throw new IllegalArgumentException("field name in input_map [ " + originalFieldPath + "] cannot be null nor empty");
             } else {
-                throw new IllegalArgumentException("field_map [" + originalFieldPath + "] doesn't exist");
+                throw new IllegalArgumentException("field name in input_map: [" + originalFieldPath + "] doesn't exist");
             }
         }
         return originalFieldPath;
@@ -181,20 +184,18 @@ public class MLInferenceProcessor extends AbstractProcessor implements ModelExec
         String newModelOutputFieldName,
         IngestDocument ingestDocument
     ) {
-        Object modelOutputValue = getModelOutputField(modelTensorOutput, originalModelOutputFieldName, ignoreMissing);
-
-        if (modelOutputValue == null) {
-            throw new RuntimeException("Cannot find model inference output for " + originalModelOutputFieldName);
+        Object modelOutputValue = null;
+        try {
+            modelOutputValue = getModelOutputField(modelTensorOutput, originalModelOutputFieldName, ignoreMissing);
+        } catch (IOException e) {
+            if (!ignoreMissing) {
+                throw new IllegalArgumentException("model inference output can not find field name: " + originalModelOutputFieldName, e);
+            }
         }
         ValueSource ingestValue = ValueSource.wrap(modelOutputValue, scriptService);
         TemplateScript.Factory ingestField = ConfigurationUtils
             .compileTemplate(TYPE, tag, newModelOutputFieldName, newModelOutputFieldName, scriptService);
         ingestDocument.appendFieldValue(ingestField, ingestValue, false);
-    }
-
-    @Override
-    public IngestDocument execute(IngestDocument ingestDocument) throws Exception {
-        return ingestDocument;
     }
 
     @Override
@@ -206,16 +207,14 @@ public class MLInferenceProcessor extends AbstractProcessor implements ModelExec
 
         private final ScriptService scriptService;
         private final Client client;
-        private final MLModelCacheHelper modelCacheHelper;
 
-        public Factory(ScriptService scriptService, Client client, MLModelCacheHelper modelCacheHelper) {
+        public Factory(ScriptService scriptService, Client client) {
             this.scriptService = scriptService;
             this.client = client;
-            this.modelCacheHelper = modelCacheHelper;
         }
 
         @Override
-        public MLInferenceProcessor create(
+        public MLInferenceIngestProcessor create(
             Map<String, Processor.Factory> registry,
             String processorTag,
             String description,
@@ -223,22 +222,21 @@ public class MLInferenceProcessor extends AbstractProcessor implements ModelExec
 
         ) throws Exception {
             String model_id = ConfigurationUtils.readStringProperty(TYPE, processorTag, config, MODEL_ID);
-            Map<String, String> model_config = ConfigurationUtils.readOptionalMap(TYPE, processorTag, config, MODEL_CONFIG);
+            Map<String, Object> model_config_input = ConfigurationUtils.readOptionalMap(TYPE, processorTag, config, MODEL_CONFIG);
             List<Map<String, String>> input_map = ConfigurationUtils.readOptionalList(TYPE, processorTag, config, INPUT_MAP);
             List<Map<String, String>> output_map = ConfigurationUtils.readOptionalList(TYPE, processorTag, config, OUTPUT_MAP);
             boolean ignoreMissing = ConfigurationUtils.readBooleanProperty(TYPE, processorTag, config, IGNORE_MISSING, false);
-//            TODO fix modelCacheHelper is null
-//            MLModel cachedMlModel = this.modelCacheHelper.getModelInfo(model_id);
-//            FunctionName functionName = cachedMlModel.getAlgorithm();
-//
-//            // currently ml inference processor only support remote models
-//            if (functionName != FunctionName.REMOTE) {
-//                throw new IllegalArgumentException(
-//                    "the provided model_id" + model_id + " is not a remote model. Please use a remote model_id."
-//                );
-//            }
 
-            return new MLInferenceProcessor(
+            // convert model config user input data structure to Map<String, String>
+            Map<String, String> model_config = null;
+            if (model_config_input != null) {
+                model_config = new HashMap<>();
+                for (String key : model_config_input.keySet()) {
+                    model_config.put(key, gson.toJson(model_config_input.get(key)));
+                }
+            }
+
+            return new MLInferenceIngestProcessor(
                 model_id,
                 input_map,
                 output_map,
@@ -247,8 +245,7 @@ public class MLInferenceProcessor extends AbstractProcessor implements ModelExec
                 description,
                 ignoreMissing,
                 scriptService,
-                client,
-                modelCacheHelper
+                client
             );
         }
     }

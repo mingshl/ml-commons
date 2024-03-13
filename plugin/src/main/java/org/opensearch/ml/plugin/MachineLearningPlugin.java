@@ -195,7 +195,7 @@ import org.opensearch.ml.memory.index.ConversationMetaIndex;
 import org.opensearch.ml.memory.index.OpenSearchConversationalMemoryHandler;
 import org.opensearch.ml.model.MLModelCacheHelper;
 import org.opensearch.ml.model.MLModelManager;
-import org.opensearch.ml.processor.MLInferenceProcessor;
+import org.opensearch.ml.processor.MLInferenceIngestProcessor;
 import org.opensearch.ml.repackage.com.google.common.collect.ImmutableList;
 import org.opensearch.ml.rest.RestMLCreateConnectorAction;
 import org.opensearch.ml.rest.RestMLCreateControllerAction;
@@ -988,11 +988,7 @@ public class MachineLearningPlugin extends Plugin
     @Override
     public Map<String, org.opensearch.ingest.Processor.Factory> getProcessors(org.opensearch.ingest.Processor.Parameters parameters) {
         Map<String, org.opensearch.ingest.Processor.Factory> processors = new HashMap<>();
-        processors
-            .put(
-                MLInferenceProcessor.TYPE,
-                new MLInferenceProcessor.Factory(parameters.scriptService, parameters.client,  new MLModelCacheHelper(parameters.indicesService.clusterService(), parameters.env.settings()))
-            );
+        processors.put(MLInferenceIngestProcessor.TYPE, new MLInferenceIngestProcessor.Factory(parameters.scriptService, parameters.client));
         return Collections.unmodifiableMap(processors);
     }
 }
