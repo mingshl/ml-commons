@@ -18,7 +18,6 @@ import org.opensearch.ml.common.output.model.ModelTensorOutput;
 import org.opensearch.ml.common.transport.prediction.MLPredictionTaskRequest;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.gson.Gson;
 import com.jayway.jsonpath.JsonPath;
 
 /**
@@ -41,7 +40,6 @@ public interface ModelExecutor {
     }
 
     default String getModelInputFieldValue(Object originalFieldValue) {
-        Gson gson = new Gson();
         String originalFieldValueAsString = gson.toJson(originalFieldValue);
         return originalFieldValueAsString;
     }

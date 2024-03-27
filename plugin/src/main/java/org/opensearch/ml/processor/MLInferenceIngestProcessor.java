@@ -8,10 +8,7 @@ import static org.opensearch.ml.common.utils.StringUtils.gson;
 import static org.opensearch.ml.processor.MLModelUtil.*;
 
 import java.io.IOException;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.function.BiConsumer;
 
 import org.opensearch.action.ActionRequest;
@@ -37,6 +34,7 @@ public class MLInferenceIngestProcessor extends AbstractProcessor implements Mod
     private static Client client;
     public static final String TYPE = "ml_inference";
     public static final String DEFAULT_OUTPUT_FIELD_NAME = "inference_results";
+    private int nested_level = 0;
 
     protected MLInferenceIngestProcessor(
         String model_id,
@@ -156,26 +154,101 @@ public class MLInferenceIngestProcessor extends AbstractProcessor implements Mod
     ) {
         String originalFieldPath = getFieldPath(ingestDocument, originalFieldName);
         if (originalFieldPath != null) {
-            Object originalFieldValue = ingestDocument.getFieldValue(originalFieldPath, Object.class);
+            Object originalFieldValue = ingestDocument.getFieldValue(originalFieldPath, Object.class); //
             String originalFieldValueAsString = getModelInputFieldValue(originalFieldValue);
             modelParameters.put(ModelInputFieldName, originalFieldValueAsString);
+        } else {
+
+            // check if the field is an array then get from each to handle nested
+
+            if (originalFieldName.contains(".")) {
+                String[] splitDotPath = originalFieldName.split("\\.");
+                ArrayList<Object> fieldValueList = new ArrayList<>();
+                for (int i = 0; i < splitDotPath.length; i++) {
+                    if (ingestDocument.getSourceAndMetadata().keySet().contains(splitDotPath[i])) {
+                        Object innerSourceAndMetaData = ingestDocument.getSourceAndMetadata().get(splitDotPath[i]); // arrarylist
+                        if (innerSourceAndMetaData instanceof ArrayList) {
+                            ArrayList<?> innerSourceAndMetaDataList = (ArrayList<?>) innerSourceAndMetaData;
+                            for (int j = 0; j < innerSourceAndMetaDataList.size(); j++){
+                                String nested_object = splitDotPath[i];
+                                String inner_key = splitDotPath[i+1];
+                                StringBuilder nested_key_with_index = new StringBuilder();
+                                nested_key_with_index.append(nested_object).append(".").append(j).append(".").append(inner_key);
+                                fieldValueList.add(ingestDocument.getFieldValue(nested_key_with_index.toString(), Object.class));
+
+                            }
+                            String originalFieldValueAsString = getModelInputFieldValue(fieldValueList);
+                            modelParameters.put(ModelInputFieldName, originalFieldValueAsString);
+                        }
+                    }
+
+                }
+            }
+            // there are two case when cannot find a field,
+            // one is field not existed,
+            // second is nested field or flat object
+            //**** comment out hard coded ****
+//            if (originalFieldName.contains(".")) { // when the dot path not found, try to look in sourceAndMetaData
+//                String[] splitDotPath = originalFieldName.split("\\.");
+//                ArrayList<Object> fieldValueList = new ArrayList<>();
+//                for (int i = 0; i < splitDotPath.length; i++) {
+//                    if (ingestDocument.getSourceAndMetadata().keySet().contains(splitDotPath[i])) {
+//                        Object innerSourceAndMetaData = ingestDocument.getSourceAndMetadata().get(splitDotPath[i]); // arrarylist
+//                        if (innerSourceAndMetaData instanceof ArrayList) {
+//                            // ArrayList<?> innerSourceAndMetaDataList = (ArrayList<?>) innerSourceAndMetaData;
+//                            Object innerValue = ((ArrayList<?>) innerSourceAndMetaData).get(1);
+//
+//                        // for (data in )
+//                        i++;
+//                        ArrayList<?> innerSourceAndMetaDataList = (ArrayList<?>) innerSourceAndMetaData;
+//                        for (Object item : innerSourceAndMetaDataList) {
+//                            if (item instanceof Map) {
+//                                Map<String, ?> dataMap = (Map<String, Object>) item;
+//                                boolean add = fieldValueList.add(dataMap.get(splitDotPath[i]));
+//                            }
+//
+//                        }
+//                        }
+//
+//                    }
+//                }
+//                String originalFieldValueAsString = getModelInputFieldValue(fieldValueList);
+//                modelParameters.put(ModelInputFieldName, originalFieldValueAsString);
+//            }
+            // not containing dot path, cannot find field
+            else {
+                throw new IllegalArgumentException("field name in input_map: [" + originalFieldName + "] doesn't exist");
+            }
         }
     }
 
     private String getFieldPath(IngestDocument ingestDocument, String originalFieldName) {
-        TemplateScript.Factory originalField = ConfigurationUtils.compileTemplate(TYPE, tag, "field", originalFieldName, scriptService);
-        String originalFieldPath = ingestDocument.renderTemplate(originalField);
-        final boolean fieldPathIsNullOrEmpty = Strings.isNullOrEmpty(originalFieldPath);
-        if (fieldPathIsNullOrEmpty || !ingestDocument.hasField(originalFieldPath, true)) {
-            if (ignoreMissing) {
-                return null;
-            } else if (fieldPathIsNullOrEmpty) {
-                throw new IllegalArgumentException("field name in input_map [ " + originalFieldPath + "] cannot be null nor empty");
-            } else {
-                throw new IllegalArgumentException("field name in input_map: [" + originalFieldPath + "] doesn't exist");
-            }
+        // TemplateScript.Factory originalField = ConfigurationUtils.compileTemplate(TYPE, tag, "field", originalFieldName,
+        // scriptService);//when "text_chunk.text_chunk" not found, it continues
+        // String originalFieldPath = ingestDocument.renderTemplate(originalField); //not throws here
+        // final boolean fieldPathIsNullOrEmpty = Strings.isNullOrEmpty(originalFieldPath); //false
+        // final boolean hasFieldPath = ingestDocument.hasField(originalFieldPath,true); //false
+        final boolean fieldPathIsNullOrEmpty = Strings.isNullOrEmpty(originalFieldName); // false
+        final boolean hasFieldPath = ingestDocument.hasField(originalFieldName, true);
+        if (fieldPathIsNullOrEmpty || !hasFieldPath) {
+            // if (ignoreMissing) {
+            // return null;
+            // }
+            // else if (!hasFieldPath){
+            // if ( originalFieldName.contains(".")){ // when the dot path not found, try to look in sourceAndMetaData
+            // String[] splitDotPath = originalFieldName.split("\\.");
+            //
+            // return splitDotPath[splitDotPath.length - 1];
+            // }
+            // }
+            // else if (fieldPathIsNullOrEmpty) {
+            // throw new IllegalArgumentException("field name in input_map [ " + originalFieldName + "] cannot be null nor empty");
+            // } else {
+            // throw new IllegalArgumentException("field name in input_map: [" + originalFieldName + "] doesn't exist");
+            // }
+            return null;
         }
-        return originalFieldPath;
+        return originalFieldName;
     }
 
     private void appendFieldValue(

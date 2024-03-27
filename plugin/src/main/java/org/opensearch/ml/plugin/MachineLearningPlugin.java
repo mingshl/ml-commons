@@ -195,6 +195,7 @@ import org.opensearch.ml.memory.index.OpenSearchConversationalMemoryHandler;
 import org.opensearch.ml.model.MLModelCacheHelper;
 import org.opensearch.ml.model.MLModelManager;
 import org.opensearch.ml.processor.MLInferenceIngestProcessor;
+import org.opensearch.ml.processor.MLInferenceSearchResponseProcessor;
 import org.opensearch.ml.repackage.com.google.common.collect.ImmutableList;
 import org.opensearch.ml.rest.RestMLCreateConnectorAction;
 import org.opensearch.ml.rest.RestMLCreateControllerAction;
@@ -932,6 +933,8 @@ public class MachineLearningPlugin extends Plugin
                 new GenerativeQAResponseProcessor.Factory(this.client, () -> this.ragSearchPipelineEnabled)
             );
 
+        responseProcessors.put(MLInferenceSearchResponseProcessor.TYPE, new MLInferenceSearchResponseProcessor.Factory(this.client));
+
         return responseProcessors;
     }
 
@@ -959,7 +962,8 @@ public class MachineLearningPlugin extends Plugin
     @Override
     public Map<String, org.opensearch.ingest.Processor.Factory> getProcessors(org.opensearch.ingest.Processor.Parameters parameters) {
         Map<String, org.opensearch.ingest.Processor.Factory> processors = new HashMap<>();
-        processors.put(MLInferenceIngestProcessor.TYPE, new MLInferenceIngestProcessor.Factory(parameters.scriptService, parameters.client));
+        processors
+            .put(MLInferenceIngestProcessor.TYPE, new MLInferenceIngestProcessor.Factory(parameters.scriptService, parameters.client));
         return Collections.unmodifiableMap(processors);
     }
 }
