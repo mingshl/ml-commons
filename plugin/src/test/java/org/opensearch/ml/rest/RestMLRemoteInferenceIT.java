@@ -700,11 +700,11 @@ public class RestMLRemoteInferenceIT extends MLCommonsRestTestCase {
         assertFalse(responseList.isEmpty());
     }
 
-    private Response createConnector(String input) throws IOException {
+    public static Response createConnector(String input) throws IOException {
         return TestHelper.makeRequest(client(), "POST", "/_plugins/_ml/connectors/_create", null, TestHelper.toHttpEntity(input), null);
     }
 
-    private Response registerRemoteModel(String name, String connectorId) throws IOException {
+    public static Response registerRemoteModel(String name, String connectorId) throws IOException {
         String registerModelGroupEntity = "{\n"
             + "  \"name\": \"remote_model_group\",\n"
             + "  \"description\": \"This is an example description\"\n"
@@ -740,15 +740,15 @@ public class RestMLRemoteInferenceIT extends MLCommonsRestTestCase {
             .makeRequest(client(), "POST", "/_plugins/_ml/models/_register", null, TestHelper.toHttpEntity(registerModelEntity), null);
     }
 
-    private Response deployRemoteModel(String modelId) throws IOException {
+    public static Response deployRemoteModel(String modelId) throws IOException {
         return TestHelper.makeRequest(client(), "POST", "/_plugins/_ml/models/" + modelId + "/_deploy", null, "", null);
     }
 
-    private Response predictRemoteModel(String modelId, String input) throws IOException {
+    public Response predictRemoteModel(String modelId, String input) throws IOException {
         return TestHelper.makeRequest(client(), "POST", "/_plugins/_ml/models/" + modelId + "/_predict", null, input, null);
     }
 
-    private Response undeployRemoteModel(String modelId) throws IOException {
+    public Response undeployRemoteModel(String modelId) throws IOException {
         String undeployEntity = "{\n"
             + "  \"SYqCMdsFTumUwoHZcsgiUg\": {\n"
             + "    \"stats\": {\n"
@@ -767,7 +767,7 @@ public class RestMLRemoteInferenceIT extends MLCommonsRestTestCase {
         return message.equals("You exceeded your current quota, please check your plan and billing details.");
     }
 
-    private void disableClusterConnectorAccessControl() throws IOException {
+    public static void disableClusterConnectorAccessControl() throws IOException {
         Response response = TestHelper
             .makeRequest(
                 client(),
@@ -780,11 +780,11 @@ public class RestMLRemoteInferenceIT extends MLCommonsRestTestCase {
         assertEquals(200, response.getStatusLine().getStatusCode());
     }
 
-    private Response getTask(String taskId) throws IOException {
+    public static Response getTask(String taskId) throws IOException {
         return TestHelper.makeRequest(client(), "GET", "/_plugins/_ml/tasks/" + taskId, null, "", null);
     }
 
-    private String registerRemoteModel() throws IOException {
+    public String registerRemoteModel() throws IOException {
         Response response = createConnector(completionModelConnectorEntity);
         Map responseMap = parseResponseToMap(response);
         String connectorId = (String) responseMap.get("connector_id");
