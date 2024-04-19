@@ -11,7 +11,6 @@ import java.util.Map;
 import java.util.function.Consumer;
 
 import org.apache.commons.lang3.exception.ExceptionUtils;
-import org.apache.http.HttpEntity;
 import org.apache.http.HttpHeaders;
 import org.apache.http.message.BasicHeader;
 import org.junit.Before;
@@ -805,14 +804,6 @@ public class RestMLRemoteInferenceIT extends MLCommonsRestTestCase {
         return message.equals("You exceeded your current quota, please check your plan and billing details.");
     }
 
-    protected Map parseResponseToMap(Response response) throws IOException {
-        HttpEntity entity = response.getEntity();
-        assertNotNull(response);
-        String entityString = TestHelper.httpEntityToString(entity);
-        return gson.fromJson(entityString, Map.class);
-    }
-
-    protected void disableClusterConnectorAccessControl() throws IOException {
     public static void disableClusterConnectorAccessControl() throws IOException {
         Response response = TestHelper
             .makeRequest(

@@ -237,7 +237,7 @@ public class RestMLGuardrailsIT extends MLCommonsRestTestCase {
         return message.equals("You exceeded your current quota, please check your plan and billing details.");
     }
 
-    protected Map parseResponseToMap(Response response) throws IOException {
+    public static Map parseResponseToMap(Response response) throws IOException {
         HttpEntity entity = response.getEntity();
         assertNotNull(response);
         String entityString = TestHelper.httpEntityToString(entity);

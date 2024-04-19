@@ -94,7 +94,7 @@ import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 
 public abstract class MLCommonsRestTestCase extends OpenSearchRestTestCase {
-    protected Gson gson = new Gson();
+    protected static Gson gson = new Gson();
     public static long CUSTOM_MODEL_TIMEOUT = 20_000; // 20 seconds
 
     protected boolean isHttps() {
@@ -600,7 +600,7 @@ public abstract class MLCommonsRestTestCase extends OpenSearchRestTestCase {
         verifyResponse(function, response);
     }
 
-    public void getTask(RestClient client, String taskId, Consumer<Map<String, Object>> function) throws IOException {
+    public static void getTask(RestClient client, String taskId, Consumer<Map<String, Object>> function) throws IOException {
         Response response = TestHelper.makeRequest(client, "GET", "/_plugins/_ml/tasks/" + taskId, null, "", null);
         verifyResponse(function, response);
     }
@@ -635,7 +635,7 @@ public abstract class MLCommonsRestTestCase extends OpenSearchRestTestCase {
         verifyResponse(function, response);
     }
 
-    private void verifyResponse(Consumer<Map<String, Object>> verificationConsumer, Response response) throws IOException {
+    private static void verifyResponse(Consumer<Map<String, Object>> verificationConsumer, Response response) throws IOException {
         Map<String, Object> map = parseResponseToMap(response);
         if (verificationConsumer != null) {
             verificationConsumer.accept(map);
