@@ -204,6 +204,7 @@ import org.opensearch.ml.memory.index.OpenSearchConversationalMemoryHandler;
 import org.opensearch.ml.model.MLModelCacheHelper;
 import org.opensearch.ml.model.MLModelManager;
 import org.opensearch.ml.processor.MLInferenceIngestProcessor;
+import org.opensearch.ml.processor.MLInferenceSearchResponseProcessor;
 import org.opensearch.ml.repackage.com.google.common.collect.ImmutableList;
 import org.opensearch.ml.rest.RestMLCreateConnectorAction;
 import org.opensearch.ml.rest.RestMLCreateControllerAction;
@@ -308,6 +309,7 @@ public class MachineLearningPlugin extends Plugin
         SearchPipelinePlugin,
         ExtensiblePlugin,
         IngestPlugin {
+    public static final String ML_THREAD_POOL_PREFIX = "thread_pool.ml_commons.";
     public static final String ML_THREAD_POOL_PREFIX = "thread_pool.ml_commons.";
     public static final String GENERAL_THREAD_POOL = "opensearch_ml_general";
     public static final String EXECUTE_THREAD_POOL = "opensearch_ml_execute";
@@ -971,6 +973,12 @@ public class MachineLearningPlugin extends Plugin
                 GenerativeQAProcessorConstants.RESPONSE_PROCESSOR_TYPE,
                 new GenerativeQAResponseProcessor.Factory(this.client, () -> this.ragSearchPipelineEnabled)
             );
+
+        responseProcessors
+                .put(
+                        MLInferenceSearchResponseProcessor.TYPE,
+                        new MLInferenceSearchResponseProcessor.Factory(parameters.client)
+                );
 
         return responseProcessors;
     }
