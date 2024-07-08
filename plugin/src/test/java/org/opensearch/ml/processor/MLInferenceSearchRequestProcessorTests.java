@@ -47,7 +47,6 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
     @Mock
     private PipelineProcessingContext requestContext;
 
-
     static public final NamedXContentRegistry TEST_XCONTENT_REGISTRY_FOR_QUERY = new NamedXContentRegistry(
         new SearchModule(Settings.EMPTY, List.of()).getNamedXContents()
     );
@@ -58,6 +57,7 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
     public void setup() {
         MockitoAnnotations.openMocks(this);
     }
+
     /**
      * Tests that an exception is thrown when the `processRequest` method is called, as this processor
      * makes asynchronous calls and does not support synchronous processing.
@@ -71,22 +71,22 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
         String newQueryField = "query.term.text.value";
         String modelOutputField = "response";
         MLInferenceSearchRequestProcessor requestProcessor = getMlInferenceSearchRequestProcessor(
-                null,
-                modelInputField,
-                originalQueryField,
-                newQueryField,
-                modelOutputField,
-                false,
-                false
+            null,
+            modelInputField,
+            originalQueryField,
+            newQueryField,
+            modelOutputField,
+            false,
+            false
         );
         QueryBuilder incomingQuery = new TermQueryBuilder("text", "foo");
         SearchSourceBuilder source = new SearchSourceBuilder().query(incomingQuery);
         SearchRequest request = new SearchRequest().source(source);
 
-         try {
-             requestProcessor.processRequest(request);
+        try {
+            requestProcessor.processRequest(request);
 
-         } catch (Exception e) {
+        } catch (Exception e) {
             assertEquals("ML inference search request processor make asynchronous calls and does not call processRequest", e.getMessage());
         }
     }
@@ -134,6 +134,7 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
         requestProcessor.processRequestAsync(request, requestContext, Listener);
 
     }
+
     /**
      * Tests the successful rewriting of a single string in a term query based on the model output.
      *
@@ -188,6 +189,7 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
         requestProcessor.processRequestAsync(request, requestContext, Listener);
 
     }
+
     /**
      * Tests the successful rewriting of multiple string in a term query based on the model output.
      *
@@ -244,6 +246,7 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
         requestProcessor.processRequestAsync(request, requestContext, Listener);
 
     }
+
     /**
      * Tests the successful rewriting of a double in a term query based on the model output.
      *
@@ -302,6 +305,7 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
         requestProcessor.processRequestAsync(request, requestContext, Listener);
 
     }
+
     /**
      * Tests the successful rewriting of a term query to a range query based on the model output
      * and the provided query template.
@@ -367,8 +371,8 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
 
         requestProcessor.processRequestAsync(request, requestContext, Listener);
 
-
     }
+
     /**
      * Tests the successful rewriting of a term query to a range query based on the model output
      * and the provided query template, where the model output is a double value.
@@ -432,6 +436,7 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
         requestProcessor.processRequestAsync(request, requestContext, Listener);
 
     }
+
     /**
      * Tests the successful rewriting of a term query to a geometry query based on the model output
      * and the provided query template, where the model output is a list of coordinates.
@@ -522,6 +527,103 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
     }
 
     /**
+     * Tests the scenario where an exception occurs during the model inference process.
+     * The test sets up a mock client that simulates a failure during the model execution,
+     * and verifies that the appropriate exception is propagated to the listener.
+     *
+     * @throws Exception if an error occurs during the test
+     */
+    public void testExecute_InferenceException() {
+        String modelInputField = "inputs";
+        String originalQueryField = "query.term.text.value";
+        String newQueryField = "query.term.text.value";
+        String modelOutputField = "response";
+        MLInferenceSearchRequestProcessor requestProcessor = getMlInferenceSearchRequestProcessor(
+            null,
+            modelInputField,
+            originalQueryField,
+            newQueryField,
+            modelOutputField,
+            false,
+            false
+        );
+
+        doAnswer(invocation -> {
+            ActionListener<MLTaskResponse> actionListener = invocation.getArgument(2);
+            actionListener.onFailure(new RuntimeException("Executing Model failed with exception."));
+            return null;
+        }).when(client).execute(any(), any(), any());
+
+        QueryBuilder incomingQuery = new TermQueryBuilder("text", "foo");
+        SearchSourceBuilder source = new SearchSourceBuilder().query(incomingQuery);
+        SearchRequest request = new SearchRequest().source(source);
+
+        ActionListener<SearchRequest> listener = new ActionListener<>() {
+            @Override
+            public void onResponse(SearchRequest newSearchRequest) {
+                throw new RuntimeException("error handling not properly");
+            }
+
+            @Override
+            public void onFailure(Exception ex) {
+                try {
+                    throw ex;
+                } catch (Exception e) {
+                    assertEquals("Executing Model failed with exception.", e.getMessage());
+                }
+            }
+        };
+
+        requestProcessor.processRequestAsync(request, requestContext, listener);
+    }
+
+    /**
+     * Tests the scenario where an exception occurs during the model inference process,
+     * but the `ignoreFailure` flag is set to true. In this case, the original search
+     * request should be returned without any modifications.
+     */
+    public void testExecute_InferenceExceptionIgnoreFailure() {
+        String modelInputField = "inputs";
+        String originalQueryField = "query.term.text.value";
+        String newQueryField = "query.term.text.value";
+        String modelOutputField = "response";
+        MLInferenceSearchRequestProcessor requestProcessor = getMlInferenceSearchRequestProcessor(
+            null,
+            modelInputField,
+            originalQueryField,
+            newQueryField,
+            modelOutputField,
+            true,
+            false
+        );
+
+        doAnswer(invocation -> {
+            ActionListener<MLTaskResponse> actionListener = invocation.getArgument(2);
+            actionListener.onFailure(new RuntimeException("Executing Model failed with exception."));
+            return null;
+
+        }).when(client).execute(any(), any(), any());
+        QueryBuilder incomingQuery = new TermQueryBuilder("text", "foo");
+        SearchSourceBuilder source = new SearchSourceBuilder().query(incomingQuery);
+        SearchRequest request = new SearchRequest().source(source);
+
+        ActionListener<SearchRequest> listener = new ActionListener<>() {
+            @Override
+            public void onResponse(SearchRequest newSearchRequest) {
+                assertEquals(incomingQuery, newSearchRequest.source().query());
+            }
+
+            @Override
+            public void onFailure(Exception ex) {
+                throw new RuntimeException("error handling not properly");
+            }
+        };
+
+        requestProcessor.processRequestAsync(request, requestContext, listener);
+
+    }
+
+    /**
      * Tests the case where the query string is null, and an exception is expected.
      *
      * @throws Exception if an error occurs during the test
@@ -544,26 +646,26 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
         );
         SearchRequest request = new SearchRequest();
 
+        ActionListener<SearchRequest> Listener = new ActionListener<>() {
+            @Override
+            public void onResponse(SearchRequest newSearchRequest) {
+                throw new RuntimeException("error handling not properly");
+            }
 
-            ActionListener<SearchRequest> Listener = new ActionListener<>() {
-                @Override
-                public void onResponse(SearchRequest newSearchRequest) {
-                    throw new RuntimeException("error handling not properly");
+            @Override
+            public void onFailure(Exception ex) {
+                try {
+                    throw ex;
+                } catch (Exception e) {
+                    assertEquals("query body is empty, cannot processor inference on empty query request.", e.getMessage());
                 }
+            }
+        };
 
-                @Override
-                public void onFailure(Exception ex) {
-                    try {
-                    throw  ex;
-                    } catch (Exception e) {
-                        assertEquals("query body is empty, cannot processor inference on empty query request.", e.getMessage());
-                    }
-                }
-            };
-
-            requestProcessor.processRequestAsync(request, requestContext, Listener);
+        requestProcessor.processRequestAsync(request, requestContext, Listener);
 
     }
+
     /**
      * Tests the case where the query string is null, but the `ignoreFailure` flag is set to true.
      * The original search request should be returned without any modifications.
@@ -602,6 +704,7 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
         requestProcessor.processRequestAsync(request, requestContext, Listener);
 
     }
+
     /**
      * Tests the case where the query template contains an invalid query format, and an exception is expected.
      *
@@ -615,17 +718,17 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
         String originalQueryField = "query.term.text.value";
         String newQueryField = "modelPredictionScore";
         String modelOutputField = "response";
-        //typo in query
+        // typo in query
         String queryTemplate = "{\"query\":{\"range1\":{\"text\":{\"gte\":${modelPredictionScore}}}}}";
 
         MLInferenceSearchRequestProcessor requestProcessor = getMlInferenceSearchRequestProcessor(
-                queryTemplate,
-                modelInputField,
-                originalQueryField,
-                newQueryField,
-                modelOutputField,
-                false,
-                false
+            queryTemplate,
+            modelInputField,
+            originalQueryField,
+            newQueryField,
+            modelOutputField,
+            false,
+            false
         );
 
         ModelTensor modelTensor = ModelTensor.builder().dataAsMap(ImmutableMap.of("response", "0.123")).build();
@@ -657,16 +760,14 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
 
             @Override
             public void onFailure(Exception e) {
-                                assertEquals(
-                        "unknown query [range1] did you mean [range]?",
-                        e.getMessage()
-                );
+                assertEquals("unknown query [range1] did you mean [range]?", e.getMessage());
             }
         };
 
         requestProcessor.processRequestAsync(request, requestContext, Listener);
 
     }
+
     /**
      * Tests the case where the query field specified in the input mapping is not found in the original query string,
      * and an exception is expected.
@@ -707,14 +808,15 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
 
             @Override
             public void onFailure(Exception ex) {
-                    assertEquals(
-                            "cannot find field: query.term.text.value1 in query string: {\"query\":{\"term\":{\"text\":{\"value\":\"foo\",\"boost\":1.0}}}}",
-                            ex.getMessage()
-                    );
+                assertEquals(
+                    "cannot find field: query.term.text.value1 in query string: {\"query\":{\"term\":{\"text\":{\"value\":\"foo\",\"boost\":1.0}}}}",
+                    ex.getMessage()
+                );
             }
         };
         requestProcessor.processRequestAsync(request, requestContext, Listener);
     }
+
     /**
      * Tests the case where the query field specified in the input mapping is not found in the query template,
      * and an exception is expected.
@@ -758,8 +860,8 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
             @Override
             public void onFailure(Exception ex) {
                 assertEquals(
-                        "cannot find field: query.term.text.value1 in query string: {\"query\":{\"term\":{\"text\":{\"value\":\"foo\",\"boost\":1.0}}}}",
-                        ex.getMessage()
+                    "cannot find field: query.term.text.value1 in query string: {\"query\":{\"term\":{\"text\":{\"value\":\"foo\",\"boost\":1.0}}}}",
+                    ex.getMessage()
                 );
             }
         };
@@ -798,11 +900,11 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
         /**
          * example input term query: {"query":{"term":{"text":{"value":"foo","boost":1.0}}}}
          */
-         ActionListener<SearchRequest> Listener = new ActionListener<>() {
+        ActionListener<SearchRequest> Listener = new ActionListener<>() {
             @Override
             public void onResponse(SearchRequest newSearchRequest) {
                 assertEquals(newSearchRequest.source().query(), incomingQuery);
-                }
+            }
 
             @Override
             public void onFailure(Exception ex) {
@@ -844,7 +946,7 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
         /**
          * example input term query: {"query":{"term":{"text":{"value":"foo","boost":1.0}}}}
          */
-            ActionListener<SearchRequest> Listener = new ActionListener<>() {
+        ActionListener<SearchRequest> Listener = new ActionListener<>() {
             @Override
             public void onResponse(SearchRequest newSearchRequest) {
                 assertEquals(newSearchRequest.source().query(), incomingQuery);
@@ -922,8 +1024,9 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
 
     @Before
     public void init() {
-        factory = new MLInferenceSearchRequestProcessor.Factory( client, xContentRegistry);
+        factory = new MLInferenceSearchRequestProcessor.Factory(client, xContentRegistry);
     }
+
     /**
      * Tests the creation of the MLInferenceSearchRequestProcessor with required fields.
      *
@@ -943,11 +1046,13 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
         config.put(INPUT_MAP, inputMap);
         config.put(OUTPUT_MAP, outputMap);
         String processorTag = randomAlphaOfLength(10);
-        MLInferenceSearchRequestProcessor MLInferenceSearchRequestProcessor = factory.create(Collections.emptyMap(), processorTag, null, false,config,null);
+        MLInferenceSearchRequestProcessor MLInferenceSearchRequestProcessor = factory
+            .create(Collections.emptyMap(), processorTag, null, false, config, null);
         assertNotNull(MLInferenceSearchRequestProcessor);
         assertEquals(MLInferenceSearchRequestProcessor.getTag(), processorTag);
         assertEquals(MLInferenceSearchRequestProcessor.getType(), MLInferenceSearchRequestProcessor.TYPE);
     }
+
     /**
      * Tests the creation of the MLInferenceSearchRequestProcessor for a local model.
      *
@@ -975,11 +1080,13 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
         config.put(OUTPUT_MAP, outputMap);
         config.put(MAX_PREDICTION_TASKS, 5);
         String processorTag = randomAlphaOfLength(10);
-        MLInferenceSearchRequestProcessor MLInferenceSearchRequestProcessor = factory.create(Collections.emptyMap(), processorTag, null, false,config,null);
+        MLInferenceSearchRequestProcessor MLInferenceSearchRequestProcessor = factory
+            .create(Collections.emptyMap(), processorTag, null, false, config, null);
         assertNotNull(MLInferenceSearchRequestProcessor);
         assertEquals(MLInferenceSearchRequestProcessor.getTag(), processorTag);
         assertEquals(MLInferenceSearchRequestProcessor.getType(), MLInferenceSearchRequestProcessor.TYPE);
     }
+
     /**
      * Tests the case where the `input_map` field is missing in the configuration, and an exception is expected.
      *
@@ -988,12 +1095,13 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
     public void testCreateNoFieldPresent() throws Exception {
         Map<String, Object> config = new HashMap<>();
         try {
-            factory.create(Collections.emptyMap(), "no field", null, false,config,null);
+            factory.create(Collections.emptyMap(), "no field", null, false, config, null);
             fail("factory create should have failed");
         } catch (OpenSearchParseException e) {
             assertEquals(e.getMessage(), ("[model_id] required property is missing"));
         }
     }
+
     /**
      * Tests the case where the `input_map` field is missing in the configuration, and an exception is expected.
      *
@@ -1004,12 +1112,14 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
         config.put(MODEL_ID, "model1");
         String processorTag = randomAlphaOfLength(10);
         try {
-            MLInferenceSearchRequestProcessor MLInferenceSearchRequestProcessor = factory.create(Collections.emptyMap(), processorTag, null, false,config,null);
+            MLInferenceSearchRequestProcessor MLInferenceSearchRequestProcessor = factory
+                .create(Collections.emptyMap(), processorTag, null, false, config, null);
             fail("factory create should have failed");
         } catch (OpenSearchParseException e) {
             assertEquals(e.getMessage(), ("[input_map] required property is missing"));
         }
     }
+
     /**
      * Tests the case where the `output_map` field is missing in the configuration, and an exception is expected.
      *
@@ -1025,12 +1135,14 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
         String processorTag = randomAlphaOfLength(10);
         config.put(INPUT_MAP, inputMap);
         try {
-            MLInferenceSearchRequestProcessor MLInferenceSearchRequestProcessor = factory.create(Collections.emptyMap(), processorTag, null, false,config,null);
+            MLInferenceSearchRequestProcessor MLInferenceSearchRequestProcessor = factory
+                .create(Collections.emptyMap(), processorTag, null, false, config, null);
             fail("factory create should have failed");
         } catch (OpenSearchParseException e) {
             assertEquals(e.getMessage(), ("[output_map] required property is missing"));
         }
     }
+
     /**
      * Tests the case where the number of prediction tasks exceeds the maximum allowed value, and an exception is expected.
      *
@@ -1059,14 +1171,15 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
         String processorTag = randomAlphaOfLength(10);
 
         try {
-            factory.create(Collections.emptyMap(), processorTag, null, false,config,null);
+            factory.create(Collections.emptyMap(), processorTag, null, false, config, null);
         } catch (IllegalArgumentException e) {
             assertEquals(
-                    e.getMessage(),
-                    ("The number of prediction task setting in this process is 3. It exceeds the max_prediction_tasks of 2. Please reduce the size of input_map or increase max_prediction_tasks.")
+                e.getMessage(),
+                ("The number of prediction task setting in this process is 3. It exceeds the max_prediction_tasks of 2. Please reduce the size of input_map or increase max_prediction_tasks.")
             );
         }
     }
+
     /**
      * Tests the case where the length of the `output_map` list is greater than the length of the `input_map` list,
      * and an exception is expected.
@@ -1100,11 +1213,12 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
         String processorTag = randomAlphaOfLength(10);
 
         try {
-            factory.create(Collections.emptyMap(), processorTag, null, false,config,null);
+            factory.create(Collections.emptyMap(), processorTag, null, false, config, null);
         } catch (IllegalArgumentException e) {
             assertEquals(e.getMessage(), ("The length of output_map and the length of input_map do no match."));
         }
     }
+
     /**
      * Tests the creation of the MLInferenceSearchRequestProcessor with optional fields.
      *
@@ -1131,7 +1245,8 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
         config.put(MAX_PREDICTION_TASKS, 5);
         String processorTag = randomAlphaOfLength(10);
 
-        MLInferenceSearchRequestProcessor MLInferenceSearchRequestProcessor = factory.create(Collections.emptyMap(), processorTag, null, false,config,null);
+        MLInferenceSearchRequestProcessor MLInferenceSearchRequestProcessor = factory
+            .create(Collections.emptyMap(), processorTag, null, false, config, null);
         assertNotNull(MLInferenceSearchRequestProcessor);
         assertEquals(MLInferenceSearchRequestProcessor.getTag(), processorTag);
         assertEquals(MLInferenceSearchRequestProcessor.getType(), MLInferenceSearchRequestProcessor.TYPE);
