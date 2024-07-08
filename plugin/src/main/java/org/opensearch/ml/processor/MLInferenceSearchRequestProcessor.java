@@ -72,6 +72,7 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
     public static final String FUNCTION_NAME = "function_name";
     public static final String FULL_RESPONSE_PATH = "full_response_path";
     public static final String MODEL_INPUT = "model_input";
+    public static final String DEFAULT_MODEl_INPUT = "{ \"parameters\": ${ml_inference.parameters} }";
     // At default, ml inference processor allows maximum 10 prediction tasks running in parallel
     // it can be overwritten using max_prediction_tasks when creating processor
     public static final int DEFAULT_MAX_PREDICTION_TASKS = 10;
@@ -250,7 +251,7 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
                             requestListener.onResponse(request);
                         }
                     } catch (Exception e) {
-                        if (ignoreFailure) {
+                        if (ignoreMissing || ignoreFailure) {
                             logger.error("Failed in writing prediction outcomes to new query", e);
                             requestListener.onResponse(request);
 
@@ -523,19 +524,22 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
             boolean ignoreMissing = ConfigurationUtils.readBooleanProperty(TYPE, processorTag, config, IGNORE_MISSING, false);
             String functionName = ConfigurationUtils
                 .readStringProperty(TYPE, processorTag, config, FUNCTION_NAME, FunctionName.REMOTE.name());
-            String modelInput = ConfigurationUtils
-                .readStringProperty(TYPE, processorTag, config, MODEL_INPUT, "{ \"parameters\": ${ml_inference.parameters} }");
-            boolean defaultValue = !functionName.equalsIgnoreCase("remote");
-            boolean fullResponsePath = ConfigurationUtils.readBooleanProperty(TYPE, processorTag, config, FULL_RESPONSE_PATH, defaultValue);
+            String modelInput = ConfigurationUtils.readOptionalStringProperty(TYPE, processorTag, config, MODEL_INPUT);
+
+            // if model input is not provided for remote models, use default value
+            if (functionName.equalsIgnoreCase("remote")) {
+                modelInput = (modelInput != null) ? modelInput : DEFAULT_MODEl_INPUT;
+            } else if (modelInput == null) {
+                // if model input is not provided for local models, throw exception since it is mandatory here
+                throw new IllegalArgumentException("Please provide model input when using a local model in ML Inference Processor");
+            }
+            boolean defaultFullResponsePath = !functionName.equalsIgnoreCase(FunctionName.REMOTE.name());
+            boolean fullResponsePath = ConfigurationUtils
+                .readBooleanProperty(TYPE, processorTag, config, FULL_RESPONSE_PATH, defaultFullResponsePath);
+
             ignoreFailure = ConfigurationUtils
                 .readBooleanProperty(TYPE, processorTag, config, ConfigurationUtils.IGNORE_FAILURE_KEY, false);
 
-            // for local models, model input is required
-            if (functionName != FunctionName.REMOTE.name() && modelInput == null) {
-                throw new IllegalArgumentException(
-                    "if the processing is using local models, model_input field is required and cannot be null."
-                );
-            }
             // convert model config user input data structure to Map<String, String>
             Map<String, String> modelConfigMaps = null;
             if (modelConfigInput != null) {

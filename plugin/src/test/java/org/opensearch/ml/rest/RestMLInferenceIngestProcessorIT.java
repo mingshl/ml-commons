@@ -157,10 +157,6 @@ public class RestMLInferenceIngestProcessorIT extends MLCommonsRestTestCase {
         String index_name = "daily_index";
         createPipelineProcessor(createPipelineRequestBody, "diary_embedding_pipeline");
         createIndex(index_name, createIndexRequestBody);
-        // Skip test if key is null
-        if (OPENAI_KEY == null) {
-            return;
-        }
         uploadDocument(index_name, "1", uploadDocumentRequestBody);
         Map document = getDocument(index_name, "1");
         List embeddingList = JsonPath.parse(document).read("_source.diary_embedding");
@@ -243,10 +239,6 @@ public class RestMLInferenceIngestProcessorIT extends MLCommonsRestTestCase {
         String index_name = "book_index";
         createPipelineProcessor(createPipelineRequestBody, "embedding_pipeline");
         createIndex(index_name, createIndexRequestBody);
-        // Skip test if key is null
-        if (OPENAI_KEY == null) {
-            return;
-        }
         uploadDocument(index_name, "1", uploadDocumentRequestBody);
         Map document = getDocument(index_name, "1");
 

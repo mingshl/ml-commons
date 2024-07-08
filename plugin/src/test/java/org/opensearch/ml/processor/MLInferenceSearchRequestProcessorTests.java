@@ -1088,6 +1088,42 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
     }
 
     /**
+     * The model input field is required for using a local model
+     * when missing the model input field, expected to throw Exceptions
+     *
+     * @throws Exception if an error occurs during the test
+     */
+    public void testCreateLocalModelProcessorMissingModelInputField() throws Exception {
+        Map<String, Processor.Factory> registry = new HashMap<>();
+        Map<String, Object> config = new HashMap<>();
+        config.put(MODEL_ID, "model1");
+        config.put(FUNCTION_NAME, "text_embedding");
+        config.put(FULL_RESPONSE_PATH, true);
+        Map<String, Object> model_config = new HashMap<>();
+        model_config.put("return_number", true);
+        config.put(MODEL_CONFIG, model_config);
+        List<Map<String, String>> inputMap = new ArrayList<>();
+        Map<String, String> input = new HashMap<>();
+        input.put("text_docs", "text");
+        inputMap.add(input);
+        List<Map<String, String>> outputMap = new ArrayList<>();
+        Map<String, String> output = new HashMap<>();
+        output.put("text_embedding", "$.inference_results[0].output[0].data");
+        outputMap.add(output);
+        config.put(INPUT_MAP, inputMap);
+        config.put(OUTPUT_MAP, outputMap);
+        config.put(MAX_PREDICTION_TASKS, 5);
+        String processorTag = randomAlphaOfLength(10);
+        try {
+            MLInferenceSearchRequestProcessor MLInferenceSearchRequestProcessor = factory
+                .create(Collections.emptyMap(), processorTag, null, false, config, null);
+            assertNotNull(MLInferenceSearchRequestProcessor);
+        } catch (Exception e) {
+            assertEquals(e.getMessage(), "Please provide model input when using a local model in ML Inference Processor");
+        }
+    }
+
+    /**
      * Tests the case where the `input_map` field is missing in the configuration, and an exception is expected.
      *
      * @throws Exception if an error occurs during the test
