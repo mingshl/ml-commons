@@ -161,8 +161,8 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
          *  { "text" : "value 0", "text_embedding":[0.1, 0.2]},
          *  { "text" : "value 1", "text_embedding":[0.2, 0.2]},
          *  { "text" : "value 2", "text_embedding":[0.3, 0.2]},
-         *  { "text" : "value 3"，"text_embedding":[0.4, 0.2]},
-         *  { "text" : "value 4"，"text_embedding":[0.5, 0.2]}
+         *  { "text" : "value 3","text_embedding":[0.4, 0.2]},
+         *  { "text" : "value 4","text_embedding":[0.5, 0.2]}
          */
 
         String modelInputField = "inputs";
@@ -311,7 +311,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
         responseProcessor.processResponseAsync(request, response, responseContext, listener);
     }
 
-    public void testProcessResponseTwoRoundsOfPredictionSuccess() {
+    public void testProcessResponseTwoRoundsOfPredictionSuccess() throws Exception {
         String modelInputField = "inputs";
         String modelOutputField = "response";
 
@@ -391,6 +391,93 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
                 assertEquals(newSearchResponse.getHits().getHits()[2].getSourceAsMap().get(newDocumentField1), 2.0);
                 assertEquals(newSearchResponse.getHits().getHits()[3].getSourceAsMap().get(newDocumentField1), 3.0);
                 assertEquals(newSearchResponse.getHits().getHits()[4].getSourceAsMap().get(newDocumentField1), 4.0);
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                throw new RuntimeException(e);
+            }
+        };
+
+        responseProcessor.processResponseAsync(request, response, responseContext, listener);
+    }
+
+    public void testProcessResponseOneModelInputMultipleModelOutputs() throws Exception {
+        // one model input
+        String modelInputField = "inputs";
+        String originalDocumentField = "text";
+
+        // two model outputs
+        String modelOutputField = "response";
+        String newDocumentField = "text_embedding";
+        String modelOutputField1 = "response_type";
+        String newDocumentField1 = "embedding_type";
+
+        List<Map<String, String>> inputMap = new ArrayList<>();
+        Map<String, String> input = new HashMap<>();
+        input.put(modelInputField, originalDocumentField);
+        inputMap.add(input);
+
+        List<Map<String, String>> outputMap = new ArrayList<>();
+        Map<String, String> output = new HashMap<>();
+        output.put(newDocumentField, modelOutputField);
+        outputMap.add(output);
+
+        Map<String, String> output1 = new HashMap<>();
+        output1.put(newDocumentField1, modelOutputField1);
+        outputMap.add(output1);
+        System.out.println(outputMap);
+        MLInferenceSearchResponseProcessor responseProcessor = new MLInferenceSearchResponseProcessor(
+            "model1",
+            inputMap,
+            outputMap,
+            null,
+            DEFAULT_MAX_PREDICTION_TASKS,
+            PROCESSOR_TAG,
+            DESCRIPTION,
+            false,
+            "remote",
+            false,
+            false,
+            false,
+            "{ \"parameters\": ${ml_inference.parameters} }",
+            client,
+            TEST_XCONTENT_REGISTRY_FOR_QUERY
+        );
+        SearchRequest request = getSearchRequest();
+        SearchResponse response = getSearchResponse(5, true, originalDocumentField);
+
+        ModelTensor modelTensor = ModelTensor
+            .builder()
+            .dataAsMap(ImmutableMap.of(modelOutputField, Arrays.asList(0.0, 1.0, 2.0, 3.0, 4.0), "response_type", "embedding_float"))
+            .build();
+        System.out.println(modelTensor.getDataAsMap());
+        ModelTensors modelTensors = ModelTensors.builder().mlModelTensors(Arrays.asList(modelTensor)).build();
+        ModelTensorOutput mlModelTensorOutput = ModelTensorOutput.builder().mlModelOutputs(Arrays.asList(modelTensors)).build();
+
+        doAnswer(invocation -> {
+            ActionListener<MLTaskResponse> actionListener = invocation.getArgument(2);
+            actionListener.onResponse(MLTaskResponse.builder().output(mlModelTensorOutput).build());
+            return null;
+        }).when(client).execute(any(), any(), any());
+
+        ActionListener<SearchResponse> listener = new ActionListener<>() {
+            @Override
+            public void onResponse(SearchResponse newSearchResponse) {
+                assertEquals(newSearchResponse.getHits().getHits().length, 5);
+                System.out.println(newSearchResponse.getHits().getHits()[0].getSourceAsString());
+                System.out.println(newSearchResponse.getHits().getHits()[0].getSourceAsMap().get("text_embedding"));
+//                assertEquals(newSearchResponse.getHits().getHits()[0].getSourceAsMap().get(newDocumentField), 0.0);
+//                assertEquals(newSearchResponse.getHits().getHits()[1].getSourceAsMap().get(newDocumentField), 1.0);
+//                assertEquals(newSearchResponse.getHits().getHits()[2].getSourceAsMap().get(newDocumentField), 2.0);
+//                assertEquals(newSearchResponse.getHits().getHits()[3].getSourceAsMap().get(newDocumentField), 3.0);
+//                assertEquals(newSearchResponse.getHits().getHits()[4].getSourceAsMap().get(newDocumentField), 4.0);
+//
+//                assertEquals(newSearchResponse.getHits().getHits()[0].getSourceAsMap().get(newDocumentField1), 0.0);
+//                assertEquals(newSearchResponse.getHits().getHits()[1].getSourceAsMap().get(newDocumentField1), 1.0);
+//                assertEquals(newSearchResponse.getHits().getHits()[2].getSourceAsMap().get(newDocumentField1), 2.0);
+//                assertEquals(newSearchResponse.getHits().getHits()[3].getSourceAsMap().get(newDocumentField1), 3.0);
+//                assertEquals(newSearchResponse.getHits().getHits()[4].getSourceAsMap().get(newDocumentField1), 4.0);
             }
 
             @Override

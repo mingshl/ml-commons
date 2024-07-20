@@ -313,10 +313,11 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
                         if (hit.hasSource()) {
                             BytesReference sourceRef = hit.getSourceRef();
                             Tuple<? extends MediaType, Map<String, Object>> typeAndSourceMap = XContentHelper
-                                .convertToMap(sourceRef, false, (MediaType) null);
+                                    .convertToMap(sourceRef, false, (MediaType) null);
 
                             Map<String, Object> sourceAsMap = typeAndSourceMap.v2();
                             sourceAsMapWithInference.putAll(sourceAsMap);
+                            Map<String, Object> document = hit.getSourceAsMap();
                             for (Map.Entry<Integer, MLOutput> entry : multipleMLOutputs.entrySet()) {
                                 Integer mappingIndex = entry.getKey();
                                 MLOutput mlOutput = entry.getValue();
@@ -324,36 +325,44 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
                                 Map<String, String> inputMapping = processInputMap.get(mappingIndex);
 
                                 // TODO deal with no inputMapping and no outputMapping edge case.
-                                Iterator<Map.Entry<String, String>> inputIterator = inputMapping.entrySet().iterator();
+//                                Iterator<Map.Entry<String, String>> inputIterator = inputMapping.entrySet().iterator();
                                 Iterator<Map.Entry<String, String>> outputIterator = outputMapping.entrySet().iterator();
 
-                                // Iterate over both maps simultaneously
-                                while (inputIterator.hasNext() || outputIterator.hasNext()) {
-                                    Map.Entry<String, String> inputMapEntry = inputIterator.hasNext() ? inputIterator.next() : null;
-                                    Map.Entry<String, String> outputMapEntry = outputIterator.hasNext() ? outputIterator.next() : null;
-                                    String modelInputFieldName = inputMapEntry.getKey();
-                                    String oldDocumentFieldName = inputMapEntry.getValue();
+                                //check if document have all model input fields
+                                boolean isModelInputMissing = false;
+                                StringBuilder inputMapsDocumentFieldNameBuilder = new StringBuilder();
+                                for (Map.Entry<String, String> inputMapEntry : inputMapping.entrySet()) {
+                                    String oldDocumentFieldName = inputMapEntry.getValue(); // text
+                                    inputMapsDocumentFieldNameBuilder.append(oldDocumentFieldName);
+                                    inputMapsDocumentFieldNameBuilder.append(",");
+                                    boolean checkSingleModelInputPresent = hasField(document, oldDocumentFieldName);
+                                    if (!checkSingleModelInputPresent) {
+                                        isModelInputMissing = true;
+                                        break;
+                                    }
+                                }
+                                if (!isModelInputMissing) {
+                                    // Iterate over outputIterator
+                                    for (Map.Entry<String, String> outputMapEntry : outputMapping.entrySet()) {
 
-                                    Map<String, Object> document = hit.getSourceAsMap();
-                                    if (hasField(document, oldDocumentFieldName)) {
+                                        String newDocumentFieldName = outputMapEntry.getKey(); //text_embedding
+                                        String modelOutputFieldName = outputMapEntry.getValue(); //response
 
-                                        VersionedMapUtils.incrementCounter(hasInputMapFieldDocCounter, mappingIndex, modelInputFieldName);
+                                        VersionedMapUtils.incrementCounter(hasInputMapFieldDocCounter, mappingIndex, modelOutputFieldName);
 
-                                        String newDocumentFieldName = outputMapEntry.getKey();
-                                        String modelOutputFieldName = outputMapEntry.getValue();
                                         Object modelOutputValue = getModelOutputValue(
-                                            mlOutput,
-                                            modelOutputFieldName,
-                                            ignoreMissing,
-                                            fullResponsePath
+                                                mlOutput,
+                                                modelOutputFieldName,
+                                                ignoreMissing,
+                                                fullResponsePath
                                         );
                                         Object modelOutputValuePerDoc;
                                         if (modelOutputValue instanceof List && ((List) modelOutputValue).size() > 1) {
                                             Object valuePerDoc = ((List) modelOutputValue)
-                                                .get(
-                                                    VersionedMapUtils
-                                                        .getCounter(hasInputMapFieldDocCounter, mappingIndex, modelInputFieldName)
-                                                );
+                                                    .get(
+                                                            VersionedMapUtils
+                                                                    .getCounter(hasInputMapFieldDocCounter, mappingIndex, modelOutputFieldName)
+                                                    );
                                             modelOutputValuePerDoc = valuePerDoc;
                                         } else {
                                             modelOutputValuePerDoc = modelOutputValue;
@@ -367,16 +376,17 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
                                         } else {
                                             sourceAsMapWithInference.put(newDocumentFieldName, modelOutputValuePerDoc);
                                         }
-                                    } else {
-                                        if (!ignoreMissing) {
-                                            throw new IllegalArgumentException(
-                                                "cannot find field name: " + oldDocumentFieldName + " in hit:" + hit
-                                            );
-                                        }
                                     }
-
+                                } else {
+                                    if (!ignoreMissing) {
+                                        throw new IllegalArgumentException(
+                                                "cannot find all input_maps required fields: " + inputMapsDocumentFieldNameBuilder.toString() + " in hit:" + hit
+                                        );
+                                    }
                                 }
+
                             }
+
 
                             XContentBuilder builder = XContentBuilder.builder(typeAndSourceMap.v1().xContent());
                             builder.map(sourceAsMapWithInference);
