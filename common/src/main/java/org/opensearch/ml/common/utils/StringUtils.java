@@ -296,35 +296,19 @@ public class StringUtils {
     }
 
     /**
-     * Checks if the given input string matches the dot path format.
+     * Checks if the given input string matches the JSONPath format.
      *
-     * <p>The dot path format is a string that consists of one or more word characters
-     * (letters, digits, or underscores) separated by dots. The string can optionally
-     * start or end with a dot followed by one or more word characters.
+     * <p>The JSONPath format is a way to navigate and extract data from JSON documents.
+     * It uses a syntax similar to XPath for XML documents. This method attempts to compile
+     * the input string as a JSONPath expression using the {@link com.jayway.jsonpath.JsonPath}
+     * library. If the compilation succeeds, it means the input string is a valid JSONPath
+     * expression.
      *
-     * <p>Examples of valid dot path format strings:
-     * <ul>
-     *     <li>"foo"</li>
-     *     <li>"foo.bar"</li>
-     *     <li>"foo.bar.baz"</li>
-     *     <li>"foo.bar.baz.qux"</li>
-     *     <li>".foo"</li>
-     *     <li>"foo."</li>
-     *     <li>".foo.bar"</li>
-     * </ul>
-     *
-     * <p>Examples of invalid dot path format strings:
-     * <ul>
-     *     <li>"foo..bar"</li>
-     *     <li>"."</li>
-     *     <li>".."</li>
-     * </ul>
-     *
-     * @param input the input string to be checked
-     * @return true if the input string matches the dot path format, false otherwise
+     * @param input the input string to be checked for JSONPath format validity
+     * @return true if the input string is a valid JSONPath expression, false otherwise
      */
     public static boolean isValidJSONPath(String input) {
-        if (input == null || input.equals("")) {
+        if (input == null || input.isBlank()) {
             return false;
         }
         try {
