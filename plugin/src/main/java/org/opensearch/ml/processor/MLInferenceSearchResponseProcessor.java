@@ -61,6 +61,7 @@ import com.jayway.jsonpath.Option;
 
 public class MLInferenceSearchResponseProcessor extends AbstractProcessor implements SearchResponseProcessor, ModelExecutor {
 
+    // public static final String PARAMS_FIELD = "ml_inference_params";
     private final NamedXContentRegistry xContentRegistry;
     private static final Logger logger = LogManager.getLogger(MLInferenceSearchResponseProcessor.class);
     private final InferenceProcessorAttributes inferenceProcessorAttributes;
@@ -154,6 +155,7 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
             // skip processing when there is no hit
 
             String queryString = request.source().toString();
+
             if (hits.length == 0) {
                 responseListener.onResponse(response);
                 return;
@@ -342,15 +344,20 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
             for (Map.Entry<String, String> entry : modelConfigMapsInput.entrySet()) {
                 String modelConfigKey = entry.getKey();
                 String modelConfigValue = entry.getValue();
-                if (StringUtils.isValidJSONPath(modelConfigValue)) {
+                // TODO how to indentify a normal model config VS input from query String for example
+                // {"truncate_result": "false"} vs {"query_text": "ext.ml_inference.params.query_text"} vs {"query_text": "query.term.text"}
+                if (StringUtils.isValidJSONPath(modelConfigValue)
+                    && (modelConfigValue.startsWith("ext.") || modelConfigValue.startsWith("query."))) {
                     Object queryJson = JsonPath.parse(queryString).read("$");
-                    Configuration configuration = Configuration
-                        .builder()
-                        .options(Option.SUPPRESS_EXCEPTIONS, Option.DEFAULT_PATH_LEAF_TO_NULL)
-                        .build();
+                    Configuration configuration = Configuration.builder().options(Option.SUPPRESS_EXCEPTIONS).build();
+                    // support lookup values in extensions and look up values in query body
                     Object querySubString = JsonPath.using(configuration).parse(queryJson).read(modelConfigValue);
                     if (querySubString != null) {
                         modelConfigMapsInput.put(modelConfigKey, toJson(querySubString));
+//                    } else {
+//                        if (!ignoreMissing) {
+//                            throw new IllegalArgumentException("cannot find " + modelConfigValue + " in query string: " + queryString);
+//                        }
                     }
                 }
             }
@@ -546,7 +553,7 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
                                 if (processInputMap != null && !processInputMap.isEmpty()) {
                                     isModelInputMissing = checkIsModelInputMissing(document, inputMapping);
                                 }
-                                if (!isModelInputMissing) {
+                                if (!isModelInputMissing ) {
                                     // Iterate over outputMapping
                                     for (Map.Entry<String, String> outputMapEntry : outputMapping.entrySet()) {
 
@@ -820,5 +827,4 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
             );
         }
     }
-
 }
