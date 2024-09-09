@@ -66,6 +66,8 @@ import org.opensearch.ml.common.transport.MLTaskResponse;
 import org.opensearch.ml.common.transport.prediction.MLPredictionTaskAction;
 import org.opensearch.ml.common.transport.prediction.MLPredictionTaskRequest;
 import org.opensearch.ml.repackage.com.google.common.collect.ImmutableMap;
+import org.opensearch.ml.searchext.MLInferenceRequestParameters;
+import org.opensearch.ml.searchext.MLInferenceRequestParametersExtBuilder;
 import org.opensearch.search.SearchHit;
 import org.opensearch.search.SearchHits;
 import org.opensearch.search.SearchModule;
@@ -594,6 +596,158 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
     //
     // responseProcessor.processResponseAsync(request, response, responseContext, listener);
     // }
+
+    /**
+     * Tests the successful processing of a response with a single pair of input and output mappings.
+     * read the query text into model config
+     * with query extensions
+     * @throws Exception if an error occurs during the test
+     */
+    public void testProcessResponseSuccessReadQueryTextFromExt() throws Exception {
+        String modelInputField = "text_docs";
+        String originalDocumentField = "text";
+        String newDocumentField = "similarity_score";
+        String modelOutputField = "response";
+        List<Map<String, String>> inputMap = new ArrayList<>();
+        Map<String, String> input = new HashMap<>();
+        input.put(modelInputField, originalDocumentField);
+        input.put("query_text", "_request.ext.ml_inference.params.query_text");
+        inputMap.add(input);
+        List<Map<String, String>> outputMap = new ArrayList<>();
+        Map<String, String> output = new HashMap<>();
+        output.put(newDocumentField, modelOutputField);
+        outputMap.add(output);
+        Map<String, String> modelConfig = new HashMap<>();
+        MLInferenceSearchResponseProcessor responseProcessor = new MLInferenceSearchResponseProcessor(
+            "model1",
+            inputMap,
+            outputMap,
+            modelConfig,
+            DEFAULT_MAX_PREDICTION_TASKS,
+            PROCESSOR_TAG,
+            DESCRIPTION,
+            false,
+            "text_similarity",
+            false,
+            false,
+            false,
+            "{ \"query_text\": \"${input_map.query_text}\", \"text_docs\":${input_map.text_docs}}",
+            client,
+            TEST_XCONTENT_REGISTRY_FOR_QUERY,
+            false
+        );
+        assertEquals(responseProcessor.getType(), TYPE);
+        SearchRequest request = getSearchRequestWithExtension("query_text", "query.term.text.value");
+        String fieldName = "text";
+        SearchResponse response = getSearchResponse(5, true, fieldName);
+
+        ModelTensor modelTensor = ModelTensor
+            .builder()
+            .dataAsMap(ImmutableMap.of("response", Arrays.asList(0.0, 1.0, 2.0, 3.0, 4.0)))
+            .build();
+        ModelTensors modelTensors = ModelTensors.builder().mlModelTensors(Arrays.asList(modelTensor)).build();
+        ModelTensorOutput mlModelTensorOutput = ModelTensorOutput.builder().mlModelOutputs(Arrays.asList(modelTensors)).build();
+
+        doAnswer(invocation -> {
+            ActionListener<MLTaskResponse> actionListener = invocation.getArgument(2);
+            actionListener.onResponse(MLTaskResponse.builder().output(mlModelTensorOutput).build());
+            return null;
+        }).when(client).execute(any(), any(), any());
+
+        ActionListener<SearchResponse> listener = new ActionListener<>() {
+            @Override
+            public void onResponse(SearchResponse newSearchResponse) {
+                assertEquals(newSearchResponse.getHits().getHits().length, 5);
+                assertEquals(newSearchResponse.getHits().getHits()[0].getSourceAsMap().get(newDocumentField), 0.0);
+                assertEquals(newSearchResponse.getHits().getHits()[1].getSourceAsMap().get(newDocumentField), 1.0);
+                assertEquals(newSearchResponse.getHits().getHits()[2].getSourceAsMap().get(newDocumentField), 2.0);
+                assertEquals(newSearchResponse.getHits().getHits()[3].getSourceAsMap().get(newDocumentField), 3.0);
+                assertEquals(newSearchResponse.getHits().getHits()[4].getSourceAsMap().get(newDocumentField), 4.0);
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                throw new RuntimeException(e);
+            }
+        };
+
+        responseProcessor.processResponseAsync(request, response, responseContext, listener);
+    }
+
+//    /**
+//     * Tests the successful processing of a response with a single pair of input and output mappings.
+//     * read the query text into model config
+//     * with query extensions but field
+//     * @throws Exception if an error occurs during the test
+//     */
+//    public void testProcessResponseReadQueryTextFromExtMissing() throws Exception {
+//        String modelInputField = "text_docs";
+//        String originalDocumentField = "text";
+//        String newDocumentField = "similarity_score";
+//        String modelOutputField = "response";
+//        List<Map<String, String>> inputMap = new ArrayList<>();
+//        Map<String, String> input = new HashMap<>();
+//        input.put(modelInputField, originalDocumentField);
+//        inputMap.add(input);
+//        List<Map<String, String>> outputMap = new ArrayList<>();
+//        Map<String, String> output = new HashMap<>();
+//        output.put(newDocumentField, modelOutputField);
+//        outputMap.add(output);
+//        Map<String, String> modelConfig = new HashMap<>();
+//        modelConfig.put("query_text", "ext.ml_inference.params.query_text1");
+//        MLInferenceSearchResponseProcessor responseProcessor = new MLInferenceSearchResponseProcessor(
+//            "model1",
+//            inputMap,
+//            outputMap,
+//            modelConfig,
+//            DEFAULT_MAX_PREDICTION_TASKS,
+//            PROCESSOR_TAG,
+//            DESCRIPTION,
+//            false,
+//            "text_similarity",
+//            false,
+//            false,
+//            false,
+//            "{ \"query_text\": \"${model_config.query_text}\", \"text_docs\":${input_map.text_docs}}",
+//            client,
+//            TEST_XCONTENT_REGISTRY_FOR_QUERY,
+//            false
+//        );
+//        assertEquals(responseProcessor.getType(), TYPE);
+//        SearchRequest request = getSearchRequestWithExtension("query_text", "query.term.text.value");
+//        String fieldName = "text";
+//        SearchResponse response = getSearchResponse(5, true, fieldName);
+//
+//        ModelTensor modelTensor = ModelTensor
+//            .builder()
+//            .dataAsMap(ImmutableMap.of("response", Arrays.asList(0.0, 1.0, 2.0, 3.0, 4.0)))
+//            .build();
+//        ModelTensors modelTensors = ModelTensors.builder().mlModelTensors(Arrays.asList(modelTensor)).build();
+//        ModelTensorOutput mlModelTensorOutput = ModelTensorOutput.builder().mlModelOutputs(Arrays.asList(modelTensors)).build();
+//
+//        doAnswer(invocation -> {
+//            ActionListener<MLTaskResponse> actionListener = invocation.getArgument(2);
+//            actionListener.onResponse(MLTaskResponse.builder().output(mlModelTensorOutput).build());
+//            return null;
+//        }).when(client).execute(any(), any(), any());
+//
+//        ActionListener<SearchResponse> listener = new ActionListener<>() {
+//            @Override
+//            public void onResponse(SearchResponse newSearchResponse) {
+//                throw new RuntimeException("error handling not properly");
+//            }
+//
+//            @Override
+//            public void onFailure(Exception e) {
+//                assertEquals(
+//                    "cannot find ext.ml_inference.params.query_text1in query string: {\"query\":{\"term\":{\"text\":{\"value\":\"foo\",\"boost\":1.0}}},\"ext\":{\"ml_inference\":{\"params\":{\"query_text\":\"query.term.text.value\"}}}}",
+//                    e.getMessage()
+//                );
+//            }
+//        };
+//
+//        responseProcessor.processResponseAsync(request, response, responseContext, listener);
+//    }
 
     /**
      * Tests create processor with one_to_one is true
@@ -4002,6 +4156,22 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
         QueryBuilder incomingQuery = new TermQueryBuilder("text", "foo");
         SearchSourceBuilder source = new SearchSourceBuilder().query(incomingQuery).size(5).sort("text");
         SearchRequest request = new SearchRequest().source(source);
+        return request;
+    }
+
+    private static SearchRequest getSearchRequestWithExtension(String queryText, String queryPath) {
+        QueryBuilder incomingQuery = new TermQueryBuilder("text", "foo");
+
+        Map<String, Object> params = new HashMap<>();
+        params.put(queryText, queryPath);
+        MLInferenceRequestParameters requestParameters = new MLInferenceRequestParameters(params);
+
+        MLInferenceRequestParametersExtBuilder extBuilder = new MLInferenceRequestParametersExtBuilder();
+        extBuilder.setRequestParameters(requestParameters);
+        SearchSourceBuilder source = new SearchSourceBuilder().query(incomingQuery).ext(List.of(extBuilder));
+        ;
+        SearchRequest request = new SearchRequest().source(source);
+
         return request;
     }
 
