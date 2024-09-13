@@ -354,10 +354,10 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
                     Object querySubString = JsonPath.using(configuration).parse(queryJson).read(modelConfigValue);
                     if (querySubString != null) {
                         modelConfigMapsInput.put(modelConfigKey, toJson(querySubString));
-//                    } else {
-//                        if (!ignoreMissing) {
-//                            throw new IllegalArgumentException("cannot find " + modelConfigValue + " in query string: " + queryString);
-//                        }
+                        // } else {
+                        // if (!ignoreMissing) {
+                        // throw new IllegalArgumentException("cannot find " + modelConfigValue + " in query string: " + queryString);
+                        // }
                     }
                 }
             }
@@ -553,7 +553,7 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
                                 if (processInputMap != null && !processInputMap.isEmpty()) {
                                     isModelInputMissing = checkIsModelInputMissing(document, inputMapping);
                                 }
-                                if (!isModelInputMissing ) {
+                                if (!isModelInputMissing) {
                                     // Iterate over outputMapping
                                     for (Map.Entry<String, String> outputMapEntry : outputMapping.entrySet()) {
 
