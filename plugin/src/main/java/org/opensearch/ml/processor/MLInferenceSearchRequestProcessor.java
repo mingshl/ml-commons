@@ -5,6 +5,8 @@
 package org.opensearch.ml.processor;
 
 import static org.opensearch.core.xcontent.XContentParserUtils.ensureExpectedToken;
+import static org.opensearch.ml.common.utils.StringUtils.gson;
+import static org.opensearch.ml.common.utils.StringUtils.toJson;
 import static org.opensearch.ml.processor.InferenceProcessorAttributes.INPUT_MAP;
 import static org.opensearch.ml.processor.InferenceProcessorAttributes.MAX_PREDICTION_TASKS;
 import static org.opensearch.ml.processor.InferenceProcessorAttributes.MODEL_CONFIG;
@@ -44,8 +46,10 @@ import org.opensearch.search.pipeline.Processor;
 import org.opensearch.search.pipeline.SearchRequestProcessor;
 
 import com.jayway.jsonpath.Configuration;
+import com.jayway.jsonpath.DocumentContext;
 import com.jayway.jsonpath.JsonPath;
 import com.jayway.jsonpath.Option;
+import com.jayway.jsonpath.PathNotFoundException;
 import com.jayway.jsonpath.ReadContext;
 
 /**
@@ -149,7 +153,6 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
             }
 
             String queryString = request.source().toString();
-
             rewriteQueryString(request, queryString, requestListener);
 
         } catch (Exception e) {
@@ -240,13 +243,14 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
                             updateIncomeQueryObject(incomeQueryObject, outputMapping, mlOutput);
                             SearchSourceBuilder searchSourceBuilder = getSearchSourceBuilder(
                                 xContentRegistry,
-                                StringUtils.toJson(incomeQueryObject)
+                                toJson(incomeQueryObject),
+                                request
                             );
                             request.source(searchSourceBuilder);
                             requestListener.onResponse(request);
                         } else {
                             String newQueryString = updateQueryTemplate(queryTemplate, outputMapping, mlOutput);
-                            SearchSourceBuilder searchSourceBuilder = getSearchSourceBuilder(xContentRegistry, newQueryString);
+                            SearchSourceBuilder searchSourceBuilder = getSearchSourceBuilder(xContentRegistry, newQueryString, request);
                             request.source(searchSourceBuilder);
                             requestListener.onResponse(request);
                         }
@@ -275,11 +279,16 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
 
             private void updateIncomeQueryObject(Object incomeQueryObject, Map<String, String> outputMapping, MLOutput mlOutput) {
                 for (Map.Entry<String, String> outputMapEntry : outputMapping.entrySet()) {
-                    String newQueryField = outputMapEntry.getKey();
-                    String modelOutputFieldName = outputMapEntry.getValue();
-                    Object modelOutputValue = getModelOutputValue(mlOutput, modelOutputFieldName, ignoreMissing, fullResponsePath);
-                    String jsonPathExpression = "$." + newQueryField;
-                    JsonPath.parse(incomeQueryObject).set(jsonPathExpression, modelOutputValue);
+                    String jsonPathExpression = null;
+                    try {
+                        String newQueryField = outputMapEntry.getKey();
+                        String modelOutputFieldName = outputMapEntry.getValue();
+                        Object modelOutputValue = getModelOutputValue(mlOutput, modelOutputFieldName, ignoreMissing, fullResponsePath);
+                        jsonPathExpression = newQueryField;
+                        JsonPath.using(suppressExceptionConfiguration).parse(incomeQueryObject).set(jsonPathExpression, modelOutputValue);
+                    } catch (PathNotFoundException e) {
+                        throw new IllegalArgumentException("can not find path " + jsonPathExpression + "in query string");
+                    }
                 }
             }
 
@@ -298,14 +307,39 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
     }
 
     /**
+     * Formats a template query by potentially replacing the 'query' field with the content of 'query.template'.
+     *
+     * This method checks if the input query string contains placeholders. If it doesn't contain placeholders
+     * and a 'query.template' exists, it replaces the 'query' field with the content of 'query.template'.
+     *
+     * @param incomeQueryString The JSON string representing the query to be formatted.
+     * @return The formatted query string. If no changes were made, returns the original string.
+     * @throws IllegalArgumentException If the input string is null or empty, or if JSON parsing fails.
+     */
+    private static String formatTemplateQuery(String incomeQueryString) {
+
+        DocumentContext context = JsonPath.using(ModelExecutor.suppressExceptionConfiguration).parse(incomeQueryString);
+        Object queryTemplate = context.read("$.query.template");
+
+        if (queryTemplate != null && !StringUtils.hasPlaceholders(incomeQueryString)) {
+
+            context.set("$.query", queryTemplate);
+            return context.jsonString();
+        } else {
+            return incomeQueryString;
+        }
+
+    }
+
+    /**
      * Creates a {@link GroupedActionListener} that collects the responses from multiple ML model inferences.
      *
-     * @param rewriteRequestListner the {@link ActionListener} to be notified when all ML model inferences are complete
+     * @param rewriteRequestListener the {@link ActionListener} to be notified when all ML model inferences are complete
      * @param inputMapSize  the number of input mappings
      * @return a {@link GroupedActionListener} that handles the responses from multiple ML model inferences
      */
     private GroupedActionListener<Map<Integer, MLOutput>> createBatchPredictionListener(
-        ActionListener<Map<Integer, MLOutput>> rewriteRequestListner,
+        ActionListener<Map<Integer, MLOutput>> rewriteRequestListener,
         int inputMapSize
     ) {
         return new GroupedActionListener<>(new ActionListener<>() {
@@ -315,13 +349,13 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
                 for (Map<Integer, MLOutput> mlOutputMap : mlOutputMapCollection) {
                     mlOutputMaps.putAll(mlOutputMap);
                 }
-                rewriteRequestListner.onResponse(mlOutputMaps);
+                rewriteRequestListener.onResponse(mlOutputMaps);
             }
 
             @Override
             public void onFailure(Exception e) {
                 logger.error("Prediction Failed:", e);
-                rewriteRequestListner.onFailure(e);
+                rewriteRequestListener.onFailure(e);
             }
         }, Math.max(inputMapSize, 1));
     }
@@ -358,11 +392,14 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
             for (Map<String, String> outputMap : processOutputMap) {
                 for (Map.Entry<String, String> entry : outputMap.entrySet()) {
                     String queryField = entry.getKey();
-                    Object pathData = jsonData.read(queryField);
-                    if (pathData == null) {
-                        throw new IllegalArgumentException(
-                            "cannot find field: " + queryField + " in query string: " + jsonData.jsonString()
-                        );
+                    // output writing to search extension can be new field
+                    if (!queryField.startsWith("ext.")) {
+                        Object pathData = jsonData.read(queryField);
+                        if (pathData == null) {
+                            throw new IllegalArgumentException(
+                                "cannot find field: " + queryField + " in query string: " + jsonData.jsonString()
+                            );
+                        }
                     }
                 }
             }
@@ -402,7 +439,7 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
                 // model field as key, query field name as value
                 String modelInputFieldName = entry.getKey();
                 String queryFieldName = entry.getValue();
-                String queryFieldValue = StringUtils.toJson(JsonPath.parse(newQuery).read(queryFieldName));
+                String queryFieldValue = toJson(JsonPath.parse(newQuery).read(queryFieldName));
                 modelParameters.put(modelInputFieldName, queryFieldValue);
             }
         }
@@ -446,22 +483,95 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
     /**
      * Creates a SearchSourceBuilder instance from the given query string.
      *
+     * This method parses the provided query string, substitutes parameters, and constructs
+     * a SearchSourceBuilder object. It handles JSON content and performs variable substitution
+     * using a StringSubstitutor.
+     *
      * @param xContentRegistry the XContentRegistry instance to be used for parsing
-     * @param queryString    the query template string to be parsed
+     * @param queryString      the query template string to be parsed
+     * @param request          the SearchRequest associated with this search (not used in the method body)
      * @return a SearchSourceBuilder instance created from the query string
-     * @throws IOException if an I/O error occurs during parsing
+     * @throws IOException if an I/O error occurs during parsing or content creation
      */
-    private static SearchSourceBuilder getSearchSourceBuilder(NamedXContentRegistry xContentRegistry, String queryString)
-        throws IOException {
+    private static SearchSourceBuilder getSearchSourceBuilder(
+        NamedXContentRegistry xContentRegistry,
+        String queryString,
+        SearchRequest request
+    ) throws IOException {
         SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
+
+        // String Substitutor doesn't handle nested map lookup, using flattenMap method to flatten keys
+        Map<String, Object> parameters = flattenMap(StringUtils.fromJson(queryString, "query"));
+        Map<String, Object> parametersWithString = wrapStringsInMap(parameters);
+
+        StringSubstitutor substitutor = new StringSubstitutor(parametersWithString).setVariablePrefix("\"${").setVariableSuffix("}\"");
+
+        String queryStringSubstituted = substitutor.replace(queryString);
+        queryStringSubstituted = formatTemplateQuery(queryStringSubstituted);
 
         XContentParser queryParser = XContentType.JSON
             .xContent()
-            .createParser(xContentRegistry, LoggingDeprecationHandler.INSTANCE, queryString);
+            .createParser(xContentRegistry, LoggingDeprecationHandler.INSTANCE, queryStringSubstituted);
         ensureExpectedToken(XContentParser.Token.START_OBJECT, queryParser.nextToken(), queryParser);
 
         searchSourceBuilder.parseXContent(queryParser);
+
         return searchSourceBuilder;
+
+    }
+
+    /**
+     * Wraps string values in a map with double quotes and converts non-string values to JSON strings.
+     *
+     * This method takes an input map and processes its entries as follows:
+     * - For string values, it wraps them with double quotes.
+     * - For non-string values, it converts them to JSON strings using Gson.
+     *
+     * @param inputMap The input map containing key-value pairs to be processed.
+     * @return A new map with the same keys as the input map, but with processed values:
+     *         - String values are wrapped in double quotes.
+     *         - Non-string values are converted to JSON strings.
+     */
+    private static Map<String, Object> wrapStringsInMap(Map<String, Object> inputMap) {
+        Map<String, Object> resultNode = new HashMap();
+        for (Map.Entry<String, Object> entry : inputMap.entrySet()) {
+            String key = entry.getKey();
+            Object value = entry.getValue();
+
+            if (value instanceof String) {
+                resultNode.put(key, "\"" + value + "\"");
+            } else {
+                resultNode.put(key, gson.toJson(value));
+            }
+        }
+
+        return resultNode;
+    }
+
+    /**
+     * Flattens a nested map structure into a single-level map.
+     *
+     * This method recursively processes a potentially nested map and produces a flat map
+     * where nested keys are combined using dot notation. For example, a nested structure
+     * like {"a": {"b": "c"}} would be flattened to {"a.b": "c"}.
+     *
+     * @param map The input map to be flattened. It may contain nested maps.
+     * @return A new Map<String, Object> where all nested structures have been flattened
+     *         into a single level, with keys representing the path in the original structure.
+     */
+    private static Map<String, Object> flattenMap(Map<String, Object> map) {
+        Map<String, Object> result = new HashMap<>();
+        for (Map.Entry<String, Object> entry : map.entrySet()) {
+            if (entry.getValue() instanceof Map) {
+                Map<String, Object> nestedMap = flattenMap((Map<String, Object>) entry.getValue());
+                for (Map.Entry<String, Object> nestedEntry : nestedMap.entrySet()) {
+                    result.put(entry.getKey() + "." + nestedEntry.getKey(), nestedEntry.getValue());
+                }
+            } else {
+                result.put(entry.getKey(), entry.getValue());
+            }
+        }
+        return result;
     }
 
     /**

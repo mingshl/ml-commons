@@ -18,6 +18,7 @@ import static org.opensearch.ml.common.CommonValue.ML_TASK_INDEX;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -219,6 +220,7 @@ import org.opensearch.ml.model.MLModelManager;
 import org.opensearch.ml.processor.MLInferenceIngestProcessor;
 import org.opensearch.ml.processor.MLInferenceSearchRequestProcessor;
 import org.opensearch.ml.processor.MLInferenceSearchResponseProcessor;
+import org.opensearch.ml.query.TemplateQueryBuilder;
 import org.opensearch.ml.repackage.com.google.common.collect.ImmutableList;
 import org.opensearch.ml.rest.RestMLBatchIngestAction;
 import org.opensearch.ml.rest.RestMLCancelBatchJobAction;
@@ -273,6 +275,7 @@ import org.opensearch.ml.rest.RestMemorySearchConversationsAction;
 import org.opensearch.ml.rest.RestMemorySearchInteractionsAction;
 import org.opensearch.ml.rest.RestMemoryUpdateConversationAction;
 import org.opensearch.ml.rest.RestMemoryUpdateInteractionAction;
+import org.opensearch.ml.searchext.MLInferenceRequestParametersExtBuilder;
 import org.opensearch.ml.settings.MLCommonsSettings;
 import org.opensearch.ml.settings.MLFeatureEnabledSetting;
 import org.opensearch.ml.stats.MLClusterLevelStat;
@@ -829,6 +832,11 @@ public class MachineLearningPlugin extends Plugin
     }
 
     @Override
+    public List<QuerySpec<?>> getQueries() {
+        return Arrays.asList(new QuerySpec<>(TemplateQueryBuilder.NAME, TemplateQueryBuilder::new, TemplateQueryBuilder::fromXContent));
+    }
+
+    @Override
     public List<ExecutorBuilder<?>> getExecutorBuilders(Settings settings) {
         FixedExecutorBuilder generalThreadPool = new FixedExecutorBuilder(
             settings,
@@ -996,6 +1004,15 @@ public class MachineLearningPlugin extends Plugin
                     GenerativeQAParamExtBuilder.PARAMETER_NAME,
                     input -> new GenerativeQAParamExtBuilder(input),
                     parser -> GenerativeQAParamExtBuilder.parse(parser)
+                )
+            );
+
+        searchExts
+            .add(
+                new SearchPlugin.SearchExtSpec<>(
+                    MLInferenceRequestParametersExtBuilder.NAME,
+                    input -> new MLInferenceRequestParametersExtBuilder(input),
+                    parser -> MLInferenceRequestParametersExtBuilder.parse(parser)
                 )
             );
 

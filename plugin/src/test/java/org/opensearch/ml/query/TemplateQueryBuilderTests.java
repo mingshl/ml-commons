@@ -1,0 +1,243 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * The OpenSearch Contributors require contributions made to
+ * this file be licensed under the Apache-2.0 license or a
+ * compatible open source license.
+ */
+
+package org.opensearch.ml.query;
+
+import static org.mockito.Mockito.mock;
+import static org.opensearch.ml.query.TemplateQueryBuilder.NAME;
+
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.opensearch.common.io.stream.BytesStreamOutput;
+import org.opensearch.common.xcontent.XContentFactory;
+import org.opensearch.common.xcontent.XContentType;
+import org.opensearch.core.common.io.stream.StreamInput;
+import org.opensearch.core.xcontent.DeprecationHandler;
+import org.opensearch.core.xcontent.ToXContent;
+import org.opensearch.core.xcontent.XContentBuilder;
+import org.opensearch.core.xcontent.XContentParser;
+import org.opensearch.index.query.QueryBuilder;
+import org.opensearch.index.query.QueryRewriteContext;
+import org.opensearch.index.query.QueryShardContext;
+import org.opensearch.ml.searchext.MLInferenceRequestParameters;
+import org.opensearch.ml.searchext.MLInferenceRequestParametersExtBuilder;
+import org.opensearch.search.builder.SearchSourceBuilder;
+import org.opensearch.test.OpenSearchTestCase;
+
+import lombok.SneakyThrows;
+
+public class TemplateQueryBuilderTests extends OpenSearchTestCase {
+
+    @SneakyThrows
+    public void testFromXContent() {
+        /*
+            {
+              "template": {
+                "term": {
+                  "message": {
+                    "value": "foo"
+                  }
+                }
+              }
+            }
+        */
+        Map<String, Object> template = new HashMap<>();
+        Map<String, Object> term = new HashMap<>();
+        Map<String, Object> message = new HashMap<>();
+
+        message.put("value", "foo");
+        term.put("message", message);
+        template.put("term", term);
+
+        XContentBuilder xContentBuilder = XContentFactory.jsonBuilder().map(template);
+
+        XContentParser contentParser = createParser(xContentBuilder);
+        contentParser.nextToken();
+        TemplateQueryBuilder templateQueryBuilder = TemplateQueryBuilder.fromXContent(contentParser);
+
+        assertEquals(NAME, templateQueryBuilder.NAME);
+        assertEquals(template, templateQueryBuilder.getContent());
+
+        SearchSourceBuilder source = new SearchSourceBuilder().query(templateQueryBuilder);
+        assertEquals(source.toString(), "{\"query\":{\"template\":{\"term\":{\"message\":{\"value\":\"foo\"}}}}}");
+    }
+
+    public void testQuerySource() {
+
+        Map<String, Object> template = new HashMap<>();
+        Map<String, Object> term = new HashMap<>();
+        Map<String, Object> message = new HashMap<>();
+
+        message.put("value", "foo");
+        term.put("message", message);
+        template.put("term", term);
+        QueryBuilder incomingQuery = new TemplateQueryBuilder(template);
+        SearchSourceBuilder source = new SearchSourceBuilder().query(incomingQuery);
+        assertEquals(source.toString(), "{\"query\":{\"template\":{\"term\":{\"message\":{\"value\":\"foo\"}}}}}");
+    }
+
+    public void testQuerySourceWithPlaceHolders() {
+
+        Map<String, Object> template = new HashMap<>();
+        Map<String, Object> term = new HashMap<>();
+        Map<String, Object> message = new HashMap<>();
+
+        message.put("value", "${ext.inference.query_text}");
+        term.put("message", message);
+        template.put("term", term);
+        QueryBuilder incomingQuery = new TemplateQueryBuilder(template);
+
+        Map<String, Object> params = new HashMap<>();
+        params.put("query_text", "foo");
+        MLInferenceRequestParameters requestParameters = new MLInferenceRequestParameters(params);
+
+        MLInferenceRequestParametersExtBuilder extBuilder = new MLInferenceRequestParametersExtBuilder();
+        extBuilder.setRequestParameters(requestParameters);
+
+        SearchSourceBuilder source = new SearchSourceBuilder().query(incomingQuery).ext(List.of(extBuilder));
+        assertEquals(
+            source.toString(),
+            "{\"query\":{\"template\":{\"term\":{\"message\":{\"value\":\"${ext.inference.query_text}\"}}}},\"ext\":{\"ml_inference\":{\"query_text\":\"foo\"}}}"
+        );
+    }
+
+    public void testFromJson() throws IOException {
+        String jsonString = "{\n"
+            + "    \"geo_shape\": {\n"
+            + "      \"location\": {\n"
+            + "        \"shape\": {\n"
+            + "          \"type\": \"Envelope\",\n"
+            + "          \"coordinates\": \"${modelPredictionOutcome}\"\n"
+            + "        },\n"
+            + "        \"relation\": \"intersects\"\n"
+            + "      },\n"
+            + "      \"ignore_unmapped\": false,\n"
+            + "      \"boost\": 42.0\n"
+            + "    }\n"
+            + "}";
+
+        XContentParser parser = XContentType.JSON
+            .xContent()
+            .createParser(xContentRegistry(), DeprecationHandler.THROW_UNSUPPORTED_OPERATION, jsonString);
+        parser.nextToken(); // Move to the start object token
+        TemplateQueryBuilder parsed = TemplateQueryBuilder.fromXContent(parser);
+
+        // Check if the parsed query is an instance of TemplateQueryBuilder
+        assertNotNull(parsed);
+        assertTrue(parsed instanceof TemplateQueryBuilder);
+
+        // Check if the content of the parsed query matches the expected content
+        Map<String, Object> expectedContent = new HashMap<>();
+        Map<String, Object> geoShape = new HashMap<>();
+        Map<String, Object> location = new HashMap<>();
+        Map<String, Object> shape = new HashMap<>();
+
+        shape.put("type", "Envelope");
+        shape.put("coordinates", "${modelPredictionOutcome}");
+        location.put("shape", shape);
+        location.put("relation", "intersects");
+        geoShape.put("location", location);
+        geoShape.put("ignore_unmapped", false);
+        geoShape.put("boost", 42.0);
+        expectedContent.put("geo_shape", geoShape);
+
+        // The actual content is wrapped in a "template" object
+        Map<String, Object> actualContent = new HashMap<>();
+        actualContent.put("template", expectedContent);
+        assertEquals(expectedContent, parsed.getContent());
+
+        // Test that the query can be serialized and deserialized
+        BytesStreamOutput out = new BytesStreamOutput();
+        parsed.writeTo(out);
+        StreamInput in = out.bytes().streamInput();
+        TemplateQueryBuilder deserializedQuery = new TemplateQueryBuilder(in);
+        assertEquals(parsed.getContent(), deserializedQuery.getContent());
+
+        // Test that the query can be converted to XContent
+        XContentBuilder builder = XContentFactory.jsonBuilder();
+        builder.startObject();
+        parsed.doXContent(builder, ToXContent.EMPTY_PARAMS);
+        builder.endObject();
+
+        Map<String, Object> expectedJson = new HashMap<>();
+        Map<String, Object> template = new HashMap<>();
+        template.put("geo_shape", geoShape);
+        expectedJson.put("template", template);
+
+        XContentParser jsonParser = XContentType.JSON
+            .xContent()
+            .createParser(xContentRegistry(), DeprecationHandler.THROW_UNSUPPORTED_OPERATION, builder.toString());
+        Map<String, Object> actualJson = jsonParser.map();
+
+        assertEquals(expectedJson, actualJson);
+    }
+
+    public void testConstructorAndGetters() {
+        Map<String, Object> content = new HashMap<>();
+        content.put("key", "value");
+        TemplateQueryBuilder builder = new TemplateQueryBuilder(content);
+
+        assertEquals(content, builder.getContent());
+        assertEquals(NAME, builder.getWriteableName());
+    }
+
+    public void testEqualsAndHashCode() {
+        Map<String, Object> content1 = new HashMap<>();
+        content1.put("key", "value");
+        TemplateQueryBuilder builder1 = new TemplateQueryBuilder(content1);
+
+        Map<String, Object> content2 = new HashMap<>();
+        content2.put("key", "value");
+        TemplateQueryBuilder builder2 = new TemplateQueryBuilder(content2);
+
+        Map<String, Object> content3 = new HashMap<>();
+        content3.put("key", "different_value");
+        TemplateQueryBuilder builder3 = new TemplateQueryBuilder(content3);
+
+        assertTrue(builder1.equals(builder2));
+        assertTrue(builder1.hashCode() == builder2.hashCode());
+        assertFalse(builder1.equals(builder3));
+        assertFalse(builder1.hashCode() == builder3.hashCode());
+    }
+
+    public void testDoToQuery() {
+        Map<String, Object> content = new HashMap<>();
+        content.put("key", "value");
+        TemplateQueryBuilder builder = new TemplateQueryBuilder(content);
+
+        QueryShardContext mockContext = mock(QueryShardContext.class);
+        expectThrows(IllegalStateException.class, () -> builder.doToQuery(mockContext));
+    }
+
+    public void testDoRewrite() {
+        Map<String, Object> content = new HashMap<>();
+        content.put("key", "value");
+        TemplateQueryBuilder builder = new TemplateQueryBuilder(content);
+
+        QueryRewriteContext mockContext = mock(QueryRewriteContext.class);
+        expectThrows(IllegalStateException.class, () -> builder.doRewrite(mockContext));
+    }
+
+    public void testStreamRoundTrip() throws IOException {
+        Map<String, Object> content = new HashMap<>();
+        content.put("key", "value");
+        TemplateQueryBuilder original = new TemplateQueryBuilder(content);
+
+        BytesStreamOutput out = new BytesStreamOutput();
+        original.writeTo(out);
+
+        StreamInput in = out.bytes().streamInput();
+        TemplateQueryBuilder deserialized = new TemplateQueryBuilder(in);
+
+        assertEquals(original, deserialized);
+    }
+
+}

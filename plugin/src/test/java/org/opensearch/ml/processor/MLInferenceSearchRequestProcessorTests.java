@@ -15,6 +15,7 @@ import static org.opensearch.ml.processor.MLInferenceSearchRequestProcessor.MODE
 import java.util.*;
 
 import org.junit.Before;
+import org.junit.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.opensearch.OpenSearchParseException;
@@ -34,11 +35,17 @@ import org.opensearch.ml.common.output.model.ModelTensor;
 import org.opensearch.ml.common.output.model.ModelTensorOutput;
 import org.opensearch.ml.common.output.model.ModelTensors;
 import org.opensearch.ml.common.transport.MLTaskResponse;
+import org.opensearch.ml.query.TemplateQueryBuilder;
 import org.opensearch.ml.repackage.com.google.common.collect.ImmutableMap;
+import org.opensearch.ml.searchext.MLInferenceRequestParameters;
+import org.opensearch.ml.searchext.MLInferenceRequestParametersExtBuilder;
+import org.opensearch.plugins.SearchPlugin;
 import org.opensearch.search.SearchModule;
 import org.opensearch.search.builder.SearchSourceBuilder;
 import org.opensearch.search.pipeline.PipelineProcessingContext;
 import org.opensearch.test.AbstractBuilderTestCase;
+
+import com.jayway.jsonpath.JsonPath;
 
 public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestCase {
 
@@ -48,15 +55,27 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
     @Mock
     private PipelineProcessingContext requestContext;
 
-    static public final NamedXContentRegistry TEST_XCONTENT_REGISTRY_FOR_QUERY = new NamedXContentRegistry(
-        new SearchModule(Settings.EMPTY, List.of()).getNamedXContents()
-    );
+    static public NamedXContentRegistry TEST_XCONTENT_REGISTRY_FOR_QUERY;
     private static final String PROCESSOR_TAG = "inference";
     private static final String DESCRIPTION = "inference_test";
 
     @Before
     public void setup() {
         MockitoAnnotations.openMocks(this);
+
+        TEST_XCONTENT_REGISTRY_FOR_QUERY = new NamedXContentRegistry(new SearchModule(Settings.EMPTY, List.of(new SearchPlugin() {
+            @Override
+            public List<SearchExtSpec<?>> getSearchExts() {
+                return List
+                    .of(
+                        new SearchExtSpec<>(
+                            MLInferenceRequestParametersExtBuilder.NAME,
+                            MLInferenceRequestParametersExtBuilder::new,
+                            parser -> MLInferenceRequestParametersExtBuilder.parse(parser)
+                        )
+                    );
+            }
+        })).getNamedXContents());
     }
 
     /**
@@ -183,7 +202,7 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
 
             @Override
             public void onFailure(Exception e) {
-                throw new RuntimeException("Failed in executing processRequestAsync.");
+                throw new RuntimeException("Failed in executing processRequestAsync." + e.getMessage());
             }
         };
 
@@ -240,7 +259,7 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
 
             @Override
             public void onFailure(Exception e) {
-                throw new RuntimeException("Failed in executing processRequestAsync.");
+                throw new RuntimeException("Failed in executing processRequestAsync." + e.getMessage());
             }
         };
 
@@ -1019,6 +1038,240 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
         };
         requestProcessor.processRequestAsync(request, requestContext, Listener);
 
+    }
+
+    /**
+     * Tests the successful rewriting of a template query based on the model output.
+     *
+     * @throws Exception if an error occurs during the test
+     */
+    public void testExecute_rewriteTemplateQuerySuccess() throws Exception {
+
+        /**
+         * example term query: {"query":{"term":{"text":{"value":"foo","boost":1.0}}}}
+         */
+        String modelInputField = "inputs";
+        String originalQueryField = "query.template.term.text.value";
+        String newQueryField = "query.template.term.text.value";
+        String modelOutputField = "response";
+        MLInferenceSearchRequestProcessor requestProcessor = getMlInferenceSearchRequestProcessor(
+            null,
+            modelInputField,
+            originalQueryField,
+            newQueryField,
+            modelOutputField,
+            false,
+            false
+        );
+        ModelTensor modelTensor = ModelTensor.builder().dataAsMap(ImmutableMap.of("response", "eng")).build();
+        ModelTensors modelTensors = ModelTensors.builder().mlModelTensors(Arrays.asList(modelTensor)).build();
+        ModelTensorOutput mlModelTensorOutput = ModelTensorOutput.builder().mlModelOutputs(Arrays.asList(modelTensors)).build();
+
+        doAnswer(invocation -> {
+            ActionListener<MLTaskResponse> actionListener = invocation.getArgument(2);
+            actionListener.onResponse(MLTaskResponse.builder().output(mlModelTensorOutput).build());
+            return null;
+        }).when(client).execute(any(), any(), any());
+
+        Map<String, Object> template = new HashMap<>();
+        Map<String, Object> term = new HashMap<>();
+        Map<String, Object> text = new HashMap<>();
+
+        text.put("value", "foo");
+        term.put("text", text);
+        template.put("term", term);
+        QueryBuilder incomingQuery = new TemplateQueryBuilder(template);
+        SearchSourceBuilder source = new SearchSourceBuilder().query(incomingQuery);
+        SearchRequest request = new SearchRequest().source(source);
+
+        QueryBuilder expectedQuery = new TermQueryBuilder("text", "eng");
+
+        ActionListener<SearchRequest> Listener = new ActionListener<>() {
+            @Override
+            public void onResponse(SearchRequest newSearchRequest) {
+                assertEquals(expectedQuery, newSearchRequest.source().query());
+                assertEquals(request.toString(), newSearchRequest.toString());
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                throw new RuntimeException("Failed in executing processRequestAsync.");
+            }
+        };
+
+        requestProcessor.processRequestAsync(request, requestContext, Listener);
+
+    }
+
+    /**
+     * Tests the successful rewriting of a template query
+     * map the model input from query extension
+     * based on the model output.
+     *
+     * @throws Exception if an error occurs during the test
+     */
+    @Test
+    public void testExecute_rewriteTemplateQueryWithExtensionSuccess() throws Exception {
+
+        /**
+         * example term query: {"query":"template":{"term":{"text":{"value":"${ext.ml_inference.response}","boost":1.0}}}},"ext":{"ml_inference":{"query_text":"foo"}}}
+         */
+
+        String modelInputField = "inputs";
+        String originalQueryField = "ext.ml_inference.query_text";
+        String newQueryField = "ext.ml_inference.response";
+        String modelOutputField = "response";
+        MLInferenceSearchRequestProcessor requestProcessor = getMlInferenceSearchRequestProcessor(
+            null,
+            modelInputField,
+            originalQueryField,
+            newQueryField,
+            modelOutputField,
+            false,
+            false
+        );
+        ModelTensor modelTensor = ModelTensor.builder().dataAsMap(ImmutableMap.of("response", "eng")).build();
+        ModelTensors modelTensors = ModelTensors.builder().mlModelTensors(Arrays.asList(modelTensor)).build();
+        ModelTensorOutput mlModelTensorOutput = ModelTensorOutput.builder().mlModelOutputs(Arrays.asList(modelTensors)).build();
+
+        doAnswer(invocation -> {
+            ActionListener<MLTaskResponse> actionListener = invocation.getArgument(2);
+            actionListener.onResponse(MLTaskResponse.builder().output(mlModelTensorOutput).build());
+            return null;
+        }).when(client).execute(any(), any(), any());
+
+        Map<String, Object> template = new HashMap<>();
+        Map<String, Object> term = new HashMap<>();
+        Map<String, Object> text = new HashMap<>();
+
+        text.put("value", "${ext.ml_inference.response}");
+        term.put("text", text);
+        template.put("term", term);
+        QueryBuilder incomingQuery = new TemplateQueryBuilder(template);
+        Map<String, Object> params = new HashMap<>();
+        params.put("query_text", "foo");
+        MLInferenceRequestParameters requestParameters = new MLInferenceRequestParameters(params);
+        MLInferenceRequestParametersExtBuilder mlInferenceExtBuilder = new MLInferenceRequestParametersExtBuilder();
+        mlInferenceExtBuilder.setRequestParameters(requestParameters);
+        SearchSourceBuilder source = new SearchSourceBuilder().query(incomingQuery).ext(List.of(mlInferenceExtBuilder));
+        SearchRequest request = new SearchRequest().source(source);
+        String queryString = request.source().toString();
+        assertEquals(
+            queryString,
+            "{\"query\":{\"template\":{\"term\":{\"text\":{\"value\":\"${ext.ml_inference.response}\"}}}},\"ext\":{\"ml_inference\":{\"query_text\":\"foo\"}}}"
+        );
+        QueryBuilder expectedQuery = new TermQueryBuilder("text", "eng");
+
+        ActionListener<SearchRequest> Listener = new ActionListener<>() {
+            @Override
+            public void onResponse(SearchRequest newSearchRequest) {
+                assertEquals(expectedQuery, newSearchRequest.source().query());
+                assertEquals(request.toString(), newSearchRequest.toString());
+                assertEquals(
+                    newSearchRequest.source().query().toString(),
+                    "{\n"
+                        + "  \"term\" : {\n"
+                        + "    \"text\" : {\n"
+                        + "      \"value\" : \"eng\",\n"
+                        + "      \"boost\" : 1.0\n"
+                        + "    }\n"
+                        + "  }\n"
+                        + "}"
+                );
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                throw new RuntimeException("Failed in executing processRequestAsync." + e.getMessage());
+            }
+        };
+
+        requestProcessor.processRequestAsync(request, requestContext, Listener);
+
+    }
+
+    /**
+     * Tests the successful rewriting of a template query
+     * map the model input from query extension
+     * based on the model output.
+     *
+     * @throws Exception if an error occurs during the test
+     */
+    @Test
+    public void testExecute_rewriteTemplateQueryWithExtensionWithListSuccess() throws Exception {
+
+        String jsonStringBefore =
+            "{\"query\":{\"template\":{\"terms\":{\"text\":\"${ext.ml_inference.response}\"}}},\"ext\":{\"ml_inference\":{\"query_text\":\"foo\"}}}";
+        String jsonStringAfter =
+            "{\"query\":{\"terms\":{\"text\":[\"eng\"],\"boost\":1.0}},\"ext\":{\"ml_inference\":{\"response\":[\"eng\"],\"query_text\":\"foo\"}}}";
+        String modelInputField = "inputs";
+        String originalQueryField = "ext.ml_inference.query_text";
+        String newQueryField = "ext.ml_inference.response";
+        String modelOutputField = "response";
+        MLInferenceSearchRequestProcessor requestProcessor = getMlInferenceSearchRequestProcessor(
+            null,
+            modelInputField,
+            originalQueryField,
+            newQueryField,
+            modelOutputField,
+            false,
+            false
+        );
+        ArrayList<Object> list = new ArrayList<>();
+        list.add("eng");
+        ModelTensor modelTensor = ModelTensor.builder().dataAsMap(ImmutableMap.of("response", list)).build();
+        ModelTensors modelTensors = ModelTensors.builder().mlModelTensors(Arrays.asList(modelTensor)).build();
+        ModelTensorOutput mlModelTensorOutput = ModelTensorOutput.builder().mlModelOutputs(Arrays.asList(modelTensors)).build();
+
+        doAnswer(invocation -> {
+            ActionListener<MLTaskResponse> actionListener = invocation.getArgument(2);
+            actionListener.onResponse(MLTaskResponse.builder().output(mlModelTensorOutput).build());
+            return null;
+        }).when(client).execute(any(), any(), any());
+
+        Map<String, Object> template = new HashMap<>();
+        Map<String, Object> terms = new HashMap<>();
+        Map<String, Object> text = new HashMap<>();
+
+        terms.put("text", "${ext.ml_inference.response}");
+        template.put("terms", terms);
+        QueryBuilder incomingQuery = new TemplateQueryBuilder(template);
+        Map<String, Object> params = new HashMap<>();
+        params.put("query_text", "foo");
+        MLInferenceRequestParameters requestParameters = new MLInferenceRequestParameters(params);
+        MLInferenceRequestParametersExtBuilder mlInferenceExtBuilder = new MLInferenceRequestParametersExtBuilder();
+        mlInferenceExtBuilder.setRequestParameters(requestParameters);
+        SearchSourceBuilder source = new SearchSourceBuilder().query(incomingQuery).ext(List.of(mlInferenceExtBuilder));
+        SearchRequest request = new SearchRequest().source(source);
+        String queryString = request.source().toString();
+        assertEquals(queryString, jsonStringBefore);
+        QueryBuilder expectedQuery = new TermsQueryBuilder("text", list);
+
+        ActionListener<SearchRequest> Listener = new ActionListener<>() {
+            @Override
+            public void onResponse(SearchRequest newSearchRequest) {
+                assertEquals(expectedQuery, newSearchRequest.source().query());
+                assertEquals(request.toString(), newSearchRequest.toString());
+                assertEquals(newSearchRequest.source().toString(), jsonStringAfter);
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                throw new RuntimeException("Failed in executing processRequestAsync." + e.getMessage());
+            }
+        };
+
+        requestProcessor.processRequestAsync(request, requestContext, Listener);
+
+    }
+
+    public void testExecute() {
+        String jsonData = "{\"query\":{\"template\":{\"term\":{\"message\":{\"value\":\"foo\"}}}}}";
+
+        Object incomeQueryObject = JsonPath.parse(jsonData).read("$");
+
+        JsonPath.parse(incomeQueryObject).set("query", JsonPath.parse(jsonData).read("query.template"));
+        System.out.println(incomeQueryObject);
     }
 
     /**
