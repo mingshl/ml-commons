@@ -5,6 +5,7 @@
 package org.opensearch.ml.processor;
 
 import static org.opensearch.core.xcontent.XContentParserUtils.ensureExpectedToken;
+import static org.opensearch.ml.common.utils.StringUtils.toJson;
 import static org.opensearch.ml.processor.InferenceProcessorAttributes.INPUT_MAP;
 import static org.opensearch.ml.processor.InferenceProcessorAttributes.MAX_PREDICTION_TASKS;
 import static org.opensearch.ml.processor.InferenceProcessorAttributes.MODEL_CONFIG;
@@ -19,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import com.jayway.jsonpath.*;
 import org.apache.commons.text.StringSubstitutor;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -42,11 +44,6 @@ import org.opensearch.search.pipeline.AbstractProcessor;
 import org.opensearch.search.pipeline.PipelineProcessingContext;
 import org.opensearch.search.pipeline.Processor;
 import org.opensearch.search.pipeline.SearchRequestProcessor;
-
-import com.jayway.jsonpath.Configuration;
-import com.jayway.jsonpath.JsonPath;
-import com.jayway.jsonpath.Option;
-import com.jayway.jsonpath.ReadContext;
 
 /**
  * MLInferenceSearchRequestProcessor requires a modelId string to call model inferences
@@ -150,6 +147,9 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
 
             String queryString = request.source().toString();
 
+//            if(queryString.startsWith("{\"query\":{\"template\"")){
+//                this.queryTemplate = "{\"query\":"+StringUtils.processTextDoc(JsonPath.parse(queryString).read("query.template").toString())  + "}";
+//            }
             rewriteQueryString(request, queryString, requestListener);
 
         } catch (Exception e) {
@@ -240,7 +240,7 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
                             updateIncomeQueryObject(incomeQueryObject, outputMapping, mlOutput);
                             SearchSourceBuilder searchSourceBuilder = getSearchSourceBuilder(
                                 xContentRegistry,
-                                StringUtils.toJson(incomeQueryObject)
+                                toJson(incomeQueryObject)
                             );
                             request.source(searchSourceBuilder);
                             requestListener.onResponse(request);
@@ -278,8 +278,10 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
                     String newQueryField = outputMapEntry.getKey();
                     String modelOutputFieldName = outputMapEntry.getValue();
                     Object modelOutputValue = getModelOutputValue(mlOutput, modelOutputFieldName, ignoreMissing, fullResponsePath);
-                    String jsonPathExpression = "$." + newQueryField;
+                    String jsonPathExpression = newQueryField;
                     JsonPath.parse(incomeQueryObject).set(jsonPathExpression, modelOutputValue);
+                    formatTemplateQuery(incomeQueryObject);
+
                 }
             }
 
@@ -295,6 +297,17 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
                 return sub.replace(queryTemplate);
             }
         };
+    }
+
+    private static void formatTemplateQuery(Object incomeQueryObject) {
+        try {
+            Object queryTemplate = JsonPath.parse(incomeQueryObject).read("$.query.template");
+            if (queryTemplate != null) {
+                JsonPath.parse(incomeQueryObject).set("$.query", queryTemplate);
+            }
+        } catch (PathNotFoundException e) {
+            System.out.println("The 'query.template' path does not exist in the JSON object.");
+        }
     }
 
     /**
@@ -402,7 +415,7 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
                 // model field as key, query field name as value
                 String modelInputFieldName = entry.getKey();
                 String queryFieldName = entry.getValue();
-                String queryFieldValue = StringUtils.toJson(JsonPath.parse(newQuery).read(queryFieldName));
+                String queryFieldValue = toJson(JsonPath.parse(newQuery).read(queryFieldName));
                 modelParameters.put(modelInputFieldName, queryFieldValue);
             }
         }
