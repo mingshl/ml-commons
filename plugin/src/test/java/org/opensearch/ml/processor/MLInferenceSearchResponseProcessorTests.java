@@ -321,6 +321,104 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
         responseProcessor.processResponseAsync(request, response, responseContext, listener);
     }
 
+
+    /**
+     * Tests the successful processing of a response with a single pair of input and output mappings.
+     * read the query text into model config
+     * with query extensions
+     * @throws Exception if an error occurs during the test
+     */
+    public void testProcessResponseSuccessWriteToExt() throws Exception {
+        String documentField = "text";
+        String modelInputField = "context";
+        List<Map<String, String>> inputMap = new ArrayList<>();
+        Map<String, String> input = new HashMap<>();
+        input.put(modelInputField, documentField);
+        inputMap.add(input);
+
+        String newDocumentField = "ext.ml_inference.params.llm_response";
+        String modelOutputField = "response";
+        List<Map<String, String>> outputMap = new ArrayList<>();
+        Map<String, String> output = new HashMap<>();
+        output.put(newDocumentField, modelOutputField);
+        outputMap.add(output);
+        Map<String, String> modelConfig = new HashMap<>();
+        modelConfig
+                .put(
+                        "prompt",
+                        "\\n\\nHuman: You are a professional data analyst. You will always answer question based on the given context first. If the answer is not directly shown in the context, you will analyze the data and find the answer. If you don't know the answer, just say I don't know. Context: ${parameters.context}. \\n\\n Human: please summarize the documents \\n\\n Assistant:"
+                );
+        MLInferenceSearchResponseProcessor responseProcessor = new MLInferenceSearchResponseProcessor(
+                "model1",
+                inputMap,
+                outputMap,
+                modelConfig,
+                DEFAULT_MAX_PREDICTION_TASKS,
+                PROCESSOR_TAG,
+                DESCRIPTION,
+                false,
+                "remote",
+                false,
+                false,
+                false,
+                "{ \"parameters\": ${ml_inference.parameters} }",
+                client,
+                TEST_XCONTENT_REGISTRY_FOR_QUERY,
+                false
+        );
+
+        SearchRequest request = getSearchRequest();
+        String fieldName = "text";
+        SearchResponse response = getSearchResponse(5, true, fieldName);
+
+        ModelTensor modelTensor = ModelTensor.builder().dataAsMap(ImmutableMap.of("response", "there is 1 value")).build();
+        ModelTensors modelTensors = ModelTensors.builder().mlModelTensors(Arrays.asList(modelTensor)).build();
+        ModelTensorOutput mlModelTensorOutput = ModelTensorOutput.builder().mlModelOutputs(Arrays.asList(modelTensors)).build();
+
+        doAnswer(invocation -> {
+            ActionListener<MLTaskResponse> actionListener = invocation.getArgument(2);
+            actionListener.onResponse(MLTaskResponse.builder().output(mlModelTensorOutput).build());
+            return null;
+        }).when(client).execute(any(), any(), any());
+
+        ActionListener<SearchResponse> listener = new ActionListener<>() {
+            @Override
+            public void onResponse(SearchResponse newSearchResponse) {
+                assertEquals(newSearchResponse.getHits().getHits().length, 5);
+//                System.out.print(newSearchResponse);
+//                assertEquals(
+//                        newSearchResponse.getHits().getHits()[0].getSourceAsMap().get(newDocumentField).toString(),
+//                        "there is 1 value"
+//                );
+//                assertEquals(
+//                        newSearchResponse.getHits().getHits()[1].getSourceAsMap().get(newDocumentField).toString(),
+//                        "there is 1 value"
+//                );
+//                assertEquals(
+//                        newSearchResponse.getHits().getHits()[2].getSourceAsMap().get(newDocumentField).toString(),
+//                        "there is 1 value"
+//                );
+//                assertEquals(
+//                        newSearchResponse.getHits().getHits()[3].getSourceAsMap().get(newDocumentField).toString(),
+//                        "there is 1 value"
+//                );
+//                assertEquals(
+//                        newSearchResponse.getHits().getHits()[4].getSourceAsMap().get(newDocumentField).toString(),
+//                        "there is 1 value"
+//                );
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                throw new RuntimeException(e);
+            }
+
+        };
+        responseProcessor.processResponseAsync(request, response, responseContext, listener);
+        verify(client, times(1)).execute(any(), any(), any());
+    }
+
+
 //    /**
 //     * Tests the successful processing of a response with a single pair of input and output mappings.
 //     * read the query text into model config

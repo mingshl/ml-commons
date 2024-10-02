@@ -47,8 +47,11 @@ import org.opensearch.ml.common.output.MLOutput;
 import org.opensearch.ml.common.transport.MLTaskResponse;
 import org.opensearch.ml.common.transport.prediction.MLPredictionTaskAction;
 import org.opensearch.ml.common.utils.StringUtils;
+import org.opensearch.ml.searchext.MLInferenceRequestParameters;
+import org.opensearch.ml.searchext.MLInferenceRequestParametersExtBuilder;
 import org.opensearch.ml.utils.MapUtils;
 import org.opensearch.ml.utils.SearchResponseUtil;
+import org.opensearch.search.SearchExtBuilder;
 import org.opensearch.search.SearchHit;
 import org.opensearch.search.pipeline.AbstractProcessor;
 import org.opensearch.search.pipeline.PipelineProcessingContext;
@@ -536,7 +539,7 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
                         if (hit.hasSource()) {
                             BytesReference sourceRef = hit.getSourceRef();
                             Tuple<? extends MediaType, Map<String, Object>> typeAndSourceMap = XContentHelper
-                                .convertToMap(sourceRef, false, (MediaType) null);
+                                    .convertToMap(sourceRef, false, (MediaType) null);
 
                             Map<String, Object> sourceAsMap = typeAndSourceMap.v2();
                             sourceAsMapWithInference.putAll(sourceAsMap);
@@ -553,7 +556,7 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
                                 if (processInputMap != null && !processInputMap.isEmpty()) {
                                     isModelInputMissing = checkIsModelInputMissing(document, inputMapping);
                                 }
-                                if (!isModelInputMissing ) {
+                                if (!isModelInputMissing) {
                                     // Iterate over outputMapping
                                     for (Map.Entry<String, String> outputMapEntry : outputMapping.entrySet()) {
 
@@ -563,44 +566,65 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
                                         MapUtils.incrementCounter(writeOutputMapDocCounter, mappingIndex, modelOutputFieldName);
 
                                         Object modelOutputValue = getModelOutputValue(
-                                            mlOutput,
-                                            modelOutputFieldName,
-                                            ignoreMissing,
-                                            fullResponsePath
+                                                mlOutput,
+                                                modelOutputFieldName,
+                                                ignoreMissing,
+                                                fullResponsePath
                                         );
                                         Object modelOutputValuePerDoc;
                                         if (modelOutputValue instanceof List
-                                            && ((List) modelOutputValue).size() == hitCountInPredictions.get(mappingIndex)) {
+                                                && ((List) modelOutputValue).size() == hitCountInPredictions.get(mappingIndex)) {
                                             Object valuePerDoc = ((List) modelOutputValue)
-                                                .get(MapUtils.getCounter(writeOutputMapDocCounter, mappingIndex, modelOutputFieldName));
+                                                    .get(MapUtils.getCounter(writeOutputMapDocCounter, mappingIndex, modelOutputFieldName));
                                             modelOutputValuePerDoc = valuePerDoc;
                                         } else {
                                             modelOutputValuePerDoc = modelOutputValue;
                                         }
+                                        ///TODO check many to one
+                                        if (newDocumentFieldName.startsWith("ext.ml_inference.params")) {
+//                                            if(response.getInternalResponse().getSearchExtBuilders())
+//                                            extensionFieldName = newDocumentFieldName
+                                            //TODO check of the name of extension using getMLInferenceRequestParameters(SearchRequest searchRequest)
+                                            List<SearchExtBuilder> searchExtList = response.getInternalResponse().getSearchExtBuilders();
+                                            if (searchExtList.isEmpty()) {
+                                                MLInferenceRequestParametersExtBuilder extBuilder = new MLInferenceRequestParametersExtBuilder();
+                                                Map<String, Object> params = new HashMap<>();
+                                                params.put(newDocumentFieldName.replaceFirst("ext.ml_inference.params.", ""), modelOutputValuePerDoc);
+                                                MLInferenceRequestParameters requestParameters = new MLInferenceRequestParameters(params);
 
-                                        if (sourceAsMap.containsKey(newDocumentFieldName)) {
-                                            if (override) {
-                                                sourceAsMapWithInference.remove(newDocumentFieldName);
-                                                sourceAsMapWithInference.put(newDocumentFieldName, modelOutputValuePerDoc);
+                                                extBuilder.setRequestParameters(requestParameters);
+                                                response.addSearchExtBuilder(extBuilder);
+                                                responseListener.onResponse(response);
+                                                return;
                                             } else {
-                                                logger
-                                                    .debug(
-                                                        "{} already exists in the search response hit. Skip processing this field.",
-                                                        newDocumentFieldName
-                                                    );
-                                                // TODO when the response has the same field name, should it throw exception? currently,
-                                                // ingest processor quietly skip it
+
                                             }
                                         } else {
-                                            sourceAsMapWithInference.put(newDocumentFieldName, modelOutputValuePerDoc);
+
+                                            if (sourceAsMap.containsKey(newDocumentFieldName)) {
+                                                if (override) {
+                                                    sourceAsMapWithInference.remove(newDocumentFieldName);
+                                                    sourceAsMapWithInference.put(newDocumentFieldName, modelOutputValuePerDoc);
+                                                } else {
+                                                    logger
+                                                            .debug(
+                                                                    "{} already exists in the search response hit. Skip processing this field.",
+                                                                    newDocumentFieldName
+                                                            );
+                                                    // TODO when the response has the same field name, should it throw exception? currently,
+                                                    // ingest processor quietly skip it
+                                                }
+                                            } else {
+                                                sourceAsMapWithInference.put(newDocumentFieldName, modelOutputValuePerDoc);
+                                            }
                                         }
                                     }
                                 }
-                            }
-                            XContentBuilder builder = XContentBuilder.builder(typeAndSourceMap.v1().xContent());
-                            builder.map(sourceAsMapWithInference);
-                            hit.sourceRef(BytesReference.bytes(builder));
+                                XContentBuilder builder = XContentBuilder.builder(typeAndSourceMap.v1().xContent());
+                                builder.map(sourceAsMapWithInference);
+                                hit.sourceRef(BytesReference.bytes(builder));
 
+                            }
                         }
                     }
                 } catch (Exception e) {
