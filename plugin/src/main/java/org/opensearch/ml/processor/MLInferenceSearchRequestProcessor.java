@@ -20,7 +20,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import com.jayway.jsonpath.*;
 import org.apache.commons.text.StringSubstitutor;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -44,6 +43,8 @@ import org.opensearch.search.pipeline.AbstractProcessor;
 import org.opensearch.search.pipeline.PipelineProcessingContext;
 import org.opensearch.search.pipeline.Processor;
 import org.opensearch.search.pipeline.SearchRequestProcessor;
+
+import com.jayway.jsonpath.*;
 
 /**
  * MLInferenceSearchRequestProcessor requires a modelId string to call model inferences
@@ -147,9 +148,10 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
 
             String queryString = request.source().toString();
 
-//            if(queryString.startsWith("{\"query\":{\"template\"")){
-//                this.queryTemplate = "{\"query\":"+StringUtils.processTextDoc(JsonPath.parse(queryString).read("query.template").toString())  + "}";
-//            }
+            // if(queryString.startsWith("{\"query\":{\"template\"")){
+            // this.queryTemplate = "{\"query\":"+StringUtils.processTextDoc(JsonPath.parse(queryString).read("query.template").toString())
+            // + "}";
+            // }
             rewriteQueryString(request, queryString, requestListener);
 
         } catch (Exception e) {
@@ -238,10 +240,7 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
                         if (queryTemplate == null) {
                             Object incomeQueryObject = JsonPath.parse(queryString).read("$");
                             updateIncomeQueryObject(incomeQueryObject, outputMapping, mlOutput);
-                            SearchSourceBuilder searchSourceBuilder = getSearchSourceBuilder(
-                                xContentRegistry,
-                                toJson(incomeQueryObject)
-                            );
+                            SearchSourceBuilder searchSourceBuilder = getSearchSourceBuilder(xContentRegistry, toJson(incomeQueryObject));
                             request.source(searchSourceBuilder);
                             requestListener.onResponse(request);
                         } else {
@@ -299,6 +298,8 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
         };
     }
 
+    // TODO: this will not work with multiple processors
+    // try decide by the query type and replace "template." in all input maps and query string
     private static void formatTemplateQuery(Object incomeQueryObject) {
         try {
             Object queryTemplate = JsonPath.parse(incomeQueryObject).read("$.query.template");

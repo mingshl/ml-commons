@@ -31,9 +31,10 @@ public class MLInferenceRequestParametersExtBuilderTests extends OpenSearchTestC
         BytesReference serialized = XContentHelper.toXContent(mlInferenceExtBuilder, xContentType, true);
 
         XContentParser parser = createParser(xContentType.xContent(), serialized);
-
+        // deserialized problem
         MLInferenceRequestParametersExtBuilder deserialized = MLInferenceRequestParametersExtBuilder.parse(parser);
-
+        System.out.println(mlInferenceExtBuilder);
+        System.out.println(deserialized);
         assertEquals(mlInferenceExtBuilder, deserialized);
     }
 

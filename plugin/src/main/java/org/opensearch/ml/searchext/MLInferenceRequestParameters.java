@@ -23,10 +23,9 @@ import org.opensearch.core.xcontent.XContentParser;
 
 public class MLInferenceRequestParameters implements Writeable, ToXContentObject {
     static final String ML_INFERENCE_FIELD = "ml_inference";
-    public static final String PARAMS_FIELD = "params";
 
     private static final ObjectParser<MLInferenceRequestParameters, Void> PARSER;
-    private static final ParseField PARAMS = new ParseField(PARAMS_FIELD);
+    private static final ParseField PARAMS = new ParseField(ML_INFERENCE_FIELD);
 
     static {
         PARSER = new ObjectParser<>(ML_INFERENCE_FIELD, MLInferenceRequestParameters::new);
@@ -58,16 +57,6 @@ public class MLInferenceRequestParameters implements Writeable, ToXContentObject
         this.params = params;
     }
 
-    // public String toString() {
-    // Map<String, Object> paramsMap = new HashMap<>();
-    // paramsMap.put(PARAMS_FIELD,this.params);
-    // Map<String, Object> requestParameters = new HashMap<>();
-    // requestParameters.put(ML_INFERENCE_FIELD,paramsMap);
-    // Map<String, Object> extMap = new HashMap<>();
-    // extMap.put("ext",requestParameters);
-    // return toJson(extMap);
-    // }
-
     /**
      * Write this into the {@linkplain StreamOutput}.
      *
@@ -81,6 +70,7 @@ public class MLInferenceRequestParameters implements Writeable, ToXContentObject
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         return builder.field(PARAMS.getPreferredName(), this.params);
+        // return builder.map(this.params);
     }
 
     public static MLInferenceRequestParameters parse(XContentParser parser) throws IOException {

@@ -8,7 +8,6 @@
 package org.opensearch.ml.searchext;
 
 import static org.opensearch.ml.searchext.MLInferenceRequestParameters.ML_INFERENCE_FIELD;
-import static org.opensearch.ml.searchext.MLInferenceRequestParameters.PARAMS_FIELD;
 
 import java.io.IOException;
 import java.util.Objects;
@@ -71,19 +70,86 @@ public class MLInferenceRequestParametersExtBuilder extends SearchExtBuilder {
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         // return builder.field(NAME,requestParameters.getParams());
-        builder.startObject(NAME);
-        // for (Object config : requestParameters.getParams()) {
-        builder.field(PARAMS_FIELD, requestParameters.getParams());
-        // }
-        return builder.endObject();
+        // builder.startObject(NAME);
+        //
+        // // for (Object config : requestParameters.getParams()) {
+        // builder.field(PARAMS_FIELD, requestParameters.getParams());
+        // // }
+        // builder.endObject();
+        // return builder;
 
-        // return builder.value(requestParameters);
+        return builder.value(requestParameters);
     }
 
     public static MLInferenceRequestParametersExtBuilder parse(XContentParser parser) throws IOException {
+
         MLInferenceRequestParametersExtBuilder extBuilder = new MLInferenceRequestParametersExtBuilder();
         MLInferenceRequestParameters requestParameters = MLInferenceRequestParameters.parse(parser);
         extBuilder.setRequestParameters(requestParameters);
         return extBuilder;
+
+        // MLInferenceRequestParametersExtBuilder extBuilder = new MLInferenceRequestParametersExtBuilder();
+        // assert parser.currentToken() == XContentParser.Token.START_OBJECT;
+        // parser.nextToken();
+        // if(parser.currentToken().name() == NAME){
+        // MLInferenceRequestParameters requestParameters = MLInferenceRequestParameters.parse(parser);
+        // extBuilder.setRequestParameters(requestParameters);}
+        // else{
+        // parser.nextToken();
+        // }
+        // return extBuilder;
+
+        // MLInferenceRequestParametersExtBuilder builder = new MLInferenceRequestParametersExtBuilder();
+        //// MLInferenceRequestParameters params = MLInferenceRequestParameters.parse(parser);
+        //// builder.setRequestParameters(params);
+        //
+        //
+        // XContentParser.Token token = parser.currentToken();
+        // String currentFieldName = null;
+        // if (token != XContentParser.Token.START_OBJECT && (token = parser.nextToken()) != XContentParser.Token.START_OBJECT) {
+        // throw new ParsingException(
+        // parser.getTokenLocation(),
+        // "Expected [" + XContentParser.Token.START_OBJECT + "] but found [" + token + "]",
+        // parser.getTokenLocation()
+        // );
+        // }
+        // while ((token = parser.nextToken()) != XContentParser.Token.END_OBJECT) {
+        // if (token == XContentParser.Token.FIELD_NAME) {
+        // currentFieldName = parser.currentName();
+        // } else if (token == XContentParser.Token.START_OBJECT) {
+        // if (currentFieldName == NAME) {
+        // currentFieldName = null;
+        // while ((token = parser.nextToken()) != XContentParser.Token.END_OBJECT) {
+        // if (token == XContentParser.Token.FIELD_NAME) {
+        // currentFieldName = parser.currentName();
+        // } else if (currentFieldName != null) {
+        // if (currentFieldName == PARAMS_FIELD) {
+        // token = parser.nextToken();
+        // MLInferenceRequestParameters params = MLInferenceRequestParameters.parse(parser);
+        // builder.setRequestParameters(params);
+        // break;
+        // } else {
+        // throw new IllegalArgumentException(
+        // "Unrecognized Result Transformer type [" + currentFieldName + "]");
+        // }
+        // }
+        // }
+        // } else {
+        // throw new IllegalArgumentException("Unrecognized Transformer type [" + currentFieldName + "]");
+        // }
+        // } else {
+        // throw new ParsingException(
+        // parser.getTokenLocation(),
+        // "Unknown key for a " + token + " in [" + currentFieldName + "].",
+        // parser.getTokenLocation()
+        // );
+        // }
+        // }
+        //// return extBuilder;
+        //
+        //
+
+        // return builder;
+
     }
 }

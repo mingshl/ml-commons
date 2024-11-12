@@ -12,11 +12,8 @@ package org.opensearch.ml.query;
 
 import java.io.IOException;
 import java.util.Map;
-import java.util.Objects;
 
 import org.apache.lucene.search.Query;
-import org.opensearch.common.lucene.search.Queries;
-import org.opensearch.core.ParseField;
 import org.opensearch.core.common.io.stream.StreamInput;
 import org.opensearch.core.common.io.stream.StreamOutput;
 import org.opensearch.core.xcontent.XContentBuilder;
@@ -31,7 +28,7 @@ public class TemplateQueryBuilder extends AbstractQueryBuilder<TemplateQueryBuil
     private final Map<String, Object> content;
     private QueryBuilder resolvedQuery;
 
-//    private static final ParseField TERM_FIELD = new ParseField("template");
+    // private static final ParseField TERM_FIELD = new ParseField("template");
 
     public TemplateQueryBuilder(Map<String, Object> content) {
         this.content = content;
@@ -78,7 +75,7 @@ public class TemplateQueryBuilder extends AbstractQueryBuilder<TemplateQueryBuil
 
     @Override
     protected int doHashCode() {
-        //TODO
+        // TODO
         return 0;
     }
 
@@ -93,7 +90,7 @@ public class TemplateQueryBuilder extends AbstractQueryBuilder<TemplateQueryBuil
 
     @Override
     protected QueryBuilder doRewrite(QueryRewriteContext queryShardContext) throws IOException {
-        //TODO can we rewrite to inner query builders.doRewrite
+        // TODO can we rewrite to inner query builders.doRewrite
         // XContentBuilder xContentBuilder = XContentFactory.jsonBuilder()
         // .map(this.content);
         //
@@ -105,7 +102,7 @@ public class TemplateQueryBuilder extends AbstractQueryBuilder<TemplateQueryBuil
         // ensureExpectedToken(XContentParser.Token.START_OBJECT, queryParser.nextToken(), queryParser);
         //
         // searchSourceBuilder.parseXContent(queryParser);
-//        return super.doRewrite(queryShardContext);
+        // return super.doRewrite(queryShardContext);
         throw new IllegalStateException("Template query should run with a ml_inference request processor");
 
     }

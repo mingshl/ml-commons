@@ -14,8 +14,6 @@ import static org.opensearch.ml.processor.MLInferenceSearchRequestProcessor.MODE
 
 import java.util.*;
 
-import com.jayway.jsonpath.DocumentContext;
-import com.jayway.jsonpath.JsonPath;
 import org.junit.Before;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
@@ -42,6 +40,8 @@ import org.opensearch.search.SearchModule;
 import org.opensearch.search.builder.SearchSourceBuilder;
 import org.opensearch.search.pipeline.PipelineProcessingContext;
 import org.opensearch.test.AbstractBuilderTestCase;
+
+import com.jayway.jsonpath.JsonPath;
 
 public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestCase {
 
@@ -1039,13 +1039,13 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
         String newQueryField = "query.template.term.text.value";
         String modelOutputField = "response";
         MLInferenceSearchRequestProcessor requestProcessor = getMlInferenceSearchRequestProcessor(
-                null,
-                modelInputField,
-                originalQueryField,
-                newQueryField,
-                modelOutputField,
-                false,
-                false
+            null,
+            modelInputField,
+            originalQueryField,
+            newQueryField,
+            modelOutputField,
+            false,
+            false
         );
         ModelTensor modelTensor = ModelTensor.builder().dataAsMap(ImmutableMap.of("response", "eng")).build();
         ModelTensors modelTensors = ModelTensors.builder().mlModelTensors(Arrays.asList(modelTensor)).build();
@@ -1095,6 +1095,7 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
         JsonPath.parse(incomeQueryObject).set("query", JsonPath.parse(jsonData).read("query.template"));
         System.out.println(incomeQueryObject);
     }
+
     /**
      * Helper method to create an instance of the MLInferenceSearchRequestProcessor with the specified parameters.
      *
