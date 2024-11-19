@@ -13,12 +13,7 @@ import static org.opensearch.ml.processor.InferenceProcessorAttributes.MODEL_ID;
 import static org.opensearch.ml.processor.InferenceProcessorAttributes.OUTPUT_MAP;
 
 import java.io.IOException;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 import org.apache.commons.text.StringSubstitutor;
 import org.apache.logging.log4j.LogManager;
@@ -38,6 +33,10 @@ import org.opensearch.ml.common.output.MLOutput;
 import org.opensearch.ml.common.transport.MLTaskResponse;
 import org.opensearch.ml.common.transport.prediction.MLPredictionTaskAction;
 import org.opensearch.ml.common.utils.StringUtils;
+import org.opensearch.ml.searchext.MLInferenceRequestParameters;
+import org.opensearch.ml.searchext.MLInferenceRequestParametersExtBuilder;
+import org.opensearch.plugins.SearchPlugin;
+import org.opensearch.search.SearchExtBuilder;
 import org.opensearch.search.builder.SearchSourceBuilder;
 import org.opensearch.search.pipeline.AbstractProcessor;
 import org.opensearch.search.pipeline.PipelineProcessingContext;
@@ -240,12 +239,14 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
                         if (queryTemplate == null) {
                             Object incomeQueryObject = JsonPath.parse(queryString).read("$");
                             updateIncomeQueryObject(incomeQueryObject, outputMapping, mlOutput);
-                            SearchSourceBuilder searchSourceBuilder = getSearchSourceBuilder(xContentRegistry, toJson(incomeQueryObject));
+                            //todo throwing exception here
+                            //org.opensearch.core.xcontent.XContentParseException: unknown named object category [org.opensearch.search.SearchExtBuilder]
+                            SearchSourceBuilder searchSourceBuilder = getSearchSourceBuilder(xContentRegistry, toJson(incomeQueryObject), request);
                             request.source(searchSourceBuilder);
                             requestListener.onResponse(request);
                         } else {
                             String newQueryString = updateQueryTemplate(queryTemplate, outputMapping, mlOutput);
-                            SearchSourceBuilder searchSourceBuilder = getSearchSourceBuilder(xContentRegistry, newQueryString);
+                            SearchSourceBuilder searchSourceBuilder = getSearchSourceBuilder(xContentRegistry, newQueryString, request);
                             request.source(searchSourceBuilder);
                             requestListener.onResponse(request);
                         }
@@ -371,6 +372,7 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
         if (queryTemplate == null) {
             for (Map<String, String> outputMap : processOutputMap) {
                 for (Map.Entry<String, String> entry : outputMap.entrySet()) {
+                    //TODO undo checks for ml_inference extension.
                     String queryField = entry.getKey();
                     Object pathData = jsonData.read(queryField);
                     if (pathData == null) {
@@ -398,7 +400,7 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
         String queryString,
         List<Map<String, String>> processInputMap,
         int inputMapIndex,
-        GroupedActionListener batchPredictionListener
+        GroupedActionListener     batchPredictionListener
     ) throws IOException {
         Map<String, String> modelParameters = new HashMap<>();
         Map<String, String> modelConfigs = new HashMap<>();
@@ -461,21 +463,40 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
      * Creates a SearchSourceBuilder instance from the given query string.
      *
      * @param xContentRegistry the XContentRegistry instance to be used for parsing
-     * @param queryString    the query template string to be parsed
+     * @param queryString      the query template string to be parsed
+     * @param request
      * @return a SearchSourceBuilder instance created from the query string
      * @throws IOException if an I/O error occurs during parsing
      */
-    private static SearchSourceBuilder getSearchSourceBuilder(NamedXContentRegistry xContentRegistry, String queryString)
+    private static SearchSourceBuilder getSearchSourceBuilder(NamedXContentRegistry xContentRegistry, String queryString, SearchRequest request)
         throws IOException {
         SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
+        //parse query and extension separately
+        //TODO registerSearchExt is in core, why can not find registry for search extension?
+//        String queryBody = "query." + JsonPath.parse(queryString).read("query").toString();
+//        String queryExtension = "ext." + JsonPath.parse(queryString).read("ext").toString();
 
+
+
+        //parsing query body
         XContentParser queryParser = XContentType.JSON
             .xContent()
             .createParser(xContentRegistry, LoggingDeprecationHandler.INSTANCE, queryString);
         ensureExpectedToken(XContentParser.Token.START_OBJECT, queryParser.nextToken(), queryParser);
 
         searchSourceBuilder.parseXContent(queryParser);
+//        List<SearchExtBuilder> searchExts =request.source().ext();
+//        for (SearchExtBuilder searchExtensionBuilder :searchExts){
+//                if (searchExtensionBuilder instanceof MLInferenceRequestParametersExtBuilder) {
+//                    MLInferenceRequestParametersExtBuilder mlBuilder = (MLInferenceRequestParametersExtBuilder) searchExtensionBuilder;
+//                    Map<String, Object> params = JsonPath.parse(queryString).read("ext.ml_inference");
+//                    MLInferenceRequestParameters requestParameters = new MLInferenceRequestParameters(params);
+//                    mlBuilder.setRequestParameters(requestParameters);
+//        }
+//        }
+//        searchSourceBuilder.ext(searchExts);
         return searchSourceBuilder;
+
     }
 
     /**

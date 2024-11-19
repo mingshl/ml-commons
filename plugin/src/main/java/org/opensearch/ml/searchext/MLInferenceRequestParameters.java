@@ -23,9 +23,9 @@ import org.opensearch.core.xcontent.XContentParser;
 
 public class MLInferenceRequestParameters implements Writeable, ToXContentObject {
     static final String ML_INFERENCE_FIELD = "ml_inference";
-
+    static final String ML_INFERENCE_PARAMETERS_FIELD = "parameters";
     private static final ObjectParser<MLInferenceRequestParameters, Void> PARSER;
-    private static final ParseField PARAMS = new ParseField(ML_INFERENCE_FIELD);
+    private static final ParseField PARAMS = new ParseField(ML_INFERENCE_PARAMETERS_FIELD);
 
     static {
         PARSER = new ObjectParser<>(ML_INFERENCE_FIELD, MLInferenceRequestParameters::new);
@@ -70,7 +70,6 @@ public class MLInferenceRequestParameters implements Writeable, ToXContentObject
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         return builder.field(PARAMS.getPreferredName(), this.params);
-        // return builder.map(this.params);
     }
 
     public static MLInferenceRequestParameters parse(XContentParser parser) throws IOException {
