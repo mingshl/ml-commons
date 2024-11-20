@@ -5,6 +5,7 @@
 package org.opensearch.ml.processor;
 
 import static org.opensearch.core.xcontent.XContentParserUtils.ensureExpectedToken;
+import static org.opensearch.ml.common.utils.StringUtils.gson;
 import static org.opensearch.ml.common.utils.StringUtils.toJson;
 import static org.opensearch.ml.processor.InferenceProcessorAttributes.INPUT_MAP;
 import static org.opensearch.ml.processor.InferenceProcessorAttributes.MAX_PREDICTION_TASKS;
@@ -33,10 +34,6 @@ import org.opensearch.ml.common.output.MLOutput;
 import org.opensearch.ml.common.transport.MLTaskResponse;
 import org.opensearch.ml.common.transport.prediction.MLPredictionTaskAction;
 import org.opensearch.ml.common.utils.StringUtils;
-import org.opensearch.ml.searchext.MLInferenceRequestParameters;
-import org.opensearch.ml.searchext.MLInferenceRequestParametersExtBuilder;
-import org.opensearch.plugins.SearchPlugin;
-import org.opensearch.search.SearchExtBuilder;
 import org.opensearch.search.builder.SearchSourceBuilder;
 import org.opensearch.search.pipeline.AbstractProcessor;
 import org.opensearch.search.pipeline.PipelineProcessingContext;
@@ -146,11 +143,6 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
             }
 
             String queryString = request.source().toString();
-
-            // if(queryString.startsWith("{\"query\":{\"template\"")){
-            // this.queryTemplate = "{\"query\":"+StringUtils.processTextDoc(JsonPath.parse(queryString).read("query.template").toString())
-            // + "}";
-            // }
             rewriteQueryString(request, queryString, requestListener);
 
         } catch (Exception e) {
@@ -239,9 +231,14 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
                         if (queryTemplate == null) {
                             Object incomeQueryObject = JsonPath.parse(queryString).read("$");
                             updateIncomeQueryObject(incomeQueryObject, outputMapping, mlOutput);
-                            //todo throwing exception here
-                            //org.opensearch.core.xcontent.XContentParseException: unknown named object category [org.opensearch.search.SearchExtBuilder]
-                            SearchSourceBuilder searchSourceBuilder = getSearchSourceBuilder(xContentRegistry, toJson(incomeQueryObject), request);
+                            // todo throwing exception here
+                            // org.opensearch.core.xcontent.XContentParseException: unknown named object category
+                            // [org.opensearch.search.SearchExtBuilder]
+                            SearchSourceBuilder searchSourceBuilder = getSearchSourceBuilder(
+                                xContentRegistry,
+                                toJson(incomeQueryObject),
+                                request
+                            );
                             request.source(searchSourceBuilder);
                             requestListener.onResponse(request);
                         } else {
@@ -299,16 +296,24 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
         };
     }
 
-    // TODO: this will not work with multiple processors
-    // try decide by the query type and replace "template." in all input maps and query string
+    /**
+     * Formats the template query by checking for placeholders and converting to inner query if necessary.
+     * If the query doesn't contain placeholders, it replaces the 'query' field with the content of 'query.template'.
+     *
+     * @param incomeQueryObject The query object to be formatted.
+     * @throws IllegalArgumentException If the JSON parsing fails or if the required paths are not found.
+     */
     private static void formatTemplateQuery(Object incomeQueryObject) {
-        try {
-            Object queryTemplate = JsonPath.parse(incomeQueryObject).read("$.query.template");
-            if (queryTemplate != null) {
-                JsonPath.parse(incomeQueryObject).set("$.query", queryTemplate);
+        String incomeQueryString = toJson(incomeQueryObject);
+        if (!StringUtils.hasPlaceholders(incomeQueryString)) {
+            try {
+                Object queryTemplate = JsonPath.parse(incomeQueryObject).read("$.query.template");
+                if (queryTemplate != null) {
+                    JsonPath.parse(incomeQueryObject).set("$.query", queryTemplate);
+                }
+            } catch (PathNotFoundException e) {
+                throw new IllegalArgumentException("The 'query.template' path does not exist in the JSON object: " + e.getMessage(), e);
             }
-        } catch (PathNotFoundException e) {
-            System.out.println("The 'query.template' path does not exist in the JSON object.");
         }
     }
 
@@ -372,13 +377,15 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
         if (queryTemplate == null) {
             for (Map<String, String> outputMap : processOutputMap) {
                 for (Map.Entry<String, String> entry : outputMap.entrySet()) {
-                    //TODO undo checks for ml_inference extension.
                     String queryField = entry.getKey();
-                    Object pathData = jsonData.read(queryField);
-                    if (pathData == null) {
-                        throw new IllegalArgumentException(
-                            "cannot find field: " + queryField + " in query string: " + jsonData.jsonString()
-                        );
+                    // output writing to search extension can be new field
+                    if (!queryField.startsWith("ext.")) {
+                        Object pathData = jsonData.read(queryField);
+                        if (pathData == null) {
+                            throw new IllegalArgumentException(
+                                "cannot find field: " + queryField + " in query string: " + jsonData.jsonString()
+                            );
+                        }
                     }
                 }
             }
@@ -400,7 +407,7 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
         String queryString,
         List<Map<String, String>> processInputMap,
         int inputMapIndex,
-        GroupedActionListener     batchPredictionListener
+        GroupedActionListener batchPredictionListener
     ) throws IOException {
         Map<String, String> modelParameters = new HashMap<>();
         Map<String, String> modelConfigs = new HashMap<>();
@@ -462,41 +469,94 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
     /**
      * Creates a SearchSourceBuilder instance from the given query string.
      *
+     * This method parses the provided query string, substitutes parameters, and constructs
+     * a SearchSourceBuilder object. It handles JSON content and performs variable substitution
+     * using a StringSubstitutor.
+     *
      * @param xContentRegistry the XContentRegistry instance to be used for parsing
      * @param queryString      the query template string to be parsed
-     * @param request
+     * @param request          the SearchRequest associated with this search (not used in the method body)
      * @return a SearchSourceBuilder instance created from the query string
-     * @throws IOException if an I/O error occurs during parsing
+     * @throws IOException if an I/O error occurs during parsing or content creation
      */
-    private static SearchSourceBuilder getSearchSourceBuilder(NamedXContentRegistry xContentRegistry, String queryString, SearchRequest request)
-        throws IOException {
+    private static SearchSourceBuilder getSearchSourceBuilder(
+        NamedXContentRegistry xContentRegistry,
+        String queryString,
+        SearchRequest request
+    ) throws IOException {
         SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
-        //parse query and extension separately
-        //TODO registerSearchExt is in core, why can not find registry for search extension?
-//        String queryBody = "query." + JsonPath.parse(queryString).read("query").toString();
-//        String queryExtension = "ext." + JsonPath.parse(queryString).read("ext").toString();
 
+        // String Substitutor doesn't handle nested map lookup, using flattenMap method to flatten keys
+        Map<String, Object> parameters = flattenMap(StringUtils.fromJson(queryString, "query"));
+        Map<String, Object> parametersWithString = wrapStringsInMap(parameters);
 
+        StringSubstitutor substitutor = new StringSubstitutor(parametersWithString).setVariablePrefix("\"${").setVariableSuffix("}\"");
 
-        //parsing query body
+        String queryStringSubstituted = substitutor.replace(queryString);
+
         XContentParser queryParser = XContentType.JSON
             .xContent()
-            .createParser(xContentRegistry, LoggingDeprecationHandler.INSTANCE, queryString);
+            .createParser(xContentRegistry, LoggingDeprecationHandler.INSTANCE, queryStringSubstituted);
         ensureExpectedToken(XContentParser.Token.START_OBJECT, queryParser.nextToken(), queryParser);
 
         searchSourceBuilder.parseXContent(queryParser);
-//        List<SearchExtBuilder> searchExts =request.source().ext();
-//        for (SearchExtBuilder searchExtensionBuilder :searchExts){
-//                if (searchExtensionBuilder instanceof MLInferenceRequestParametersExtBuilder) {
-//                    MLInferenceRequestParametersExtBuilder mlBuilder = (MLInferenceRequestParametersExtBuilder) searchExtensionBuilder;
-//                    Map<String, Object> params = JsonPath.parse(queryString).read("ext.ml_inference");
-//                    MLInferenceRequestParameters requestParameters = new MLInferenceRequestParameters(params);
-//                    mlBuilder.setRequestParameters(requestParameters);
-//        }
-//        }
-//        searchSourceBuilder.ext(searchExts);
+
         return searchSourceBuilder;
 
+    }
+
+    /**
+     * Wraps string values in a map with double quotes and converts non-string values to JSON strings.
+     *
+     * This method takes an input map and processes its entries as follows:
+     * - For string values, it wraps them with double quotes.
+     * - For non-string values, it converts them to JSON strings using Gson.
+     *
+     * @param inputMap The input map containing key-value pairs to be processed.
+     * @return A new map with the same keys as the input map, but with processed values:
+     *         - String values are wrapped in double quotes.
+     *         - Non-string values are converted to JSON strings.
+     */
+    private static Map<String, Object> wrapStringsInMap(Map<String, Object> inputMap) {
+        Map<String, Object> resultNode = new HashMap();
+        for (Map.Entry<String, Object> entry : inputMap.entrySet()) {
+            String key = entry.getKey();
+            Object value = entry.getValue();
+
+            if (value instanceof String) {
+                resultNode.put(key, "\"" + value + "\"");
+            } else {
+                resultNode.put(key, gson.toJson(value));
+            }
+        }
+
+        return resultNode;
+    }
+
+    /**
+     * Flattens a nested map structure into a single-level map.
+     *
+     * This method recursively processes a potentially nested map and produces a flat map
+     * where nested keys are combined using dot notation. For example, a nested structure
+     * like {"a": {"b": "c"}} would be flattened to {"a.b": "c"}.
+     *
+     * @param map The input map to be flattened. It may contain nested maps.
+     * @return A new Map<String, Object> where all nested structures have been flattened
+     *         into a single level, with keys representing the path in the original structure.
+     */
+    private static Map<String, Object> flattenMap(Map<String, Object> map) {
+        Map<String, Object> result = new HashMap<>();
+        for (Map.Entry<String, Object> entry : map.entrySet()) {
+            if (entry.getValue() instanceof Map) {
+                Map<String, Object> nestedMap = flattenMap((Map<String, Object>) entry.getValue());
+                for (Map.Entry<String, Object> nestedEntry : nestedMap.entrySet()) {
+                    result.put(entry.getKey() + "." + nestedEntry.getKey(), nestedEntry.getValue());
+                }
+            } else {
+                result.put(entry.getKey(), entry.getValue());
+            }
+        }
+        return result;
     }
 
     /**

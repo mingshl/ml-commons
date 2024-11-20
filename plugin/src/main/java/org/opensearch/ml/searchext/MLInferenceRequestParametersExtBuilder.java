@@ -69,7 +69,7 @@ public class MLInferenceRequestParametersExtBuilder extends SearchExtBuilder {
     // TODO
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
-//         return builder.field(NAME,requestParameters.getParams());
+        // return builder.field(NAME,requestParameters.getParams());
         // builder.startObject(NAME);
         //
         // // for (Object config : requestParameters.getParams()) {

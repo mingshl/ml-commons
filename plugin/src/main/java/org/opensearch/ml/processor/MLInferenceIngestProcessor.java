@@ -123,8 +123,6 @@ public class MLInferenceIngestProcessor extends AbstractProcessor implements Mod
         List<Map<String, String>> processOutputMap = inferenceProcessorAttributes.getOutputMaps();
         int inputMapSize = (processInputMap != null) ? processInputMap.size() : 0;
 
-
-
         GroupedActionListener<Void> batchPredictionListener = new GroupedActionListener<>(new ActionListener<Collection<Void>>() {
             @Override
             public void onResponse(Collection<Void> voids) {

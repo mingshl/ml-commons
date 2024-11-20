@@ -319,4 +319,20 @@ public class StringUtils {
         }
     }
 
+    /**
+     * Checks if the input string contains any placeholders in the ${...} format.
+     *
+     * @param input The string to check for placeholders.
+     * @return true if the input contains placeholders, false otherwise.
+     */
+    public static boolean hasPlaceholders(String input) {
+        Pattern PLACEHOLDER_PATTERN = Pattern.compile("\\$\\{[^}]+\\}");
+
+        if (input == null || input.isEmpty()) {
+            return false;
+        }
+        Matcher matcher = PLACEHOLDER_PATTERN.matcher(input);
+        return matcher.find();
+    }
+
 }

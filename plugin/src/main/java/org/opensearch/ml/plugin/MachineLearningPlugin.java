@@ -926,7 +926,7 @@ public class MachineLearningPlugin extends Plugin
                 LogisticRegressionParams.XCONTENT_REGISTRY,
                 TextEmbeddingModelConfig.XCONTENT_REGISTRY,
                 AsymmetricTextEmbeddingParameters.XCONTENT_REGISTRY
-                               );
+            );
     }
 
     @Override
