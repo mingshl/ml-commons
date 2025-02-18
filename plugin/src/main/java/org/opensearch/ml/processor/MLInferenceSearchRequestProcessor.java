@@ -187,14 +187,11 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
         }
 
         try {
-            if (!validateQueryFieldInQueryString(processInputMap, processOutputMap, queryString)) {
-                requestListener.onResponse(request);
-            }
+            validateQueryFieldInQueryString(processInputMap, processOutputMap, queryString);
         } catch (Exception e) {
-            if (ignoreMissing) {
-                requestListener.onResponse(request);
-                return;
-            } else {
+            // when ignoreMissing is true, continue,
+            // when ignore Failure is false, also continue
+            if (!ignoreMissing || !ignoreFailure) {
                 requestListener.onFailure(e);
                 return;
             }
@@ -455,8 +452,15 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
                 // model field as key, query field name as value
                 String modelInputFieldName = entry.getKey();
                 String queryFieldName = entry.getValue();
-                String queryFieldValue = toJson(JsonPath.parse(newQuery).read(queryFieldName));
-                modelParameters.put(modelInputFieldName, queryFieldValue);
+                try {
+                    String queryFieldValue = toJson(JsonPath.parse(newQuery).read(queryFieldName));
+                    modelParameters.put(modelInputFieldName, queryFieldValue);
+                } catch (PathNotFoundException e) {
+                    if (!ignoreMissing) {
+                        throw new IllegalArgumentException("can not find field "+ queryFieldName + " in query" + newQuery.toString());
+                    }
+                }
+
             }
         }
 
@@ -535,6 +539,16 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
     }
 
     /**
+     * Returns the ignoreMissing flag of the processor.
+     *
+     * @return the type of the processor as a string
+     */
+
+    public boolean isIgnoreMissing() {
+        return ignoreMissing;
+    }
+
+    /**
      * A factory class for creating instances of the MLInferenceSearchRequestProcessor.
      * This class implements the Processor.Factory interface for creating SearchRequestProcessor instances.
      */
@@ -596,9 +610,6 @@ public class MLInferenceSearchRequestProcessor extends AbstractProcessor impleme
             boolean defaultFullResponsePath = !functionName.equalsIgnoreCase(FunctionName.REMOTE.name());
             boolean fullResponsePath = ConfigurationUtils
                 .readBooleanProperty(TYPE, processorTag, config, FULL_RESPONSE_PATH, defaultFullResponsePath);
-
-            ignoreFailure = ConfigurationUtils
-                .readBooleanProperty(TYPE, processorTag, config, ConfigurationUtils.IGNORE_FAILURE_KEY, false);
 
             // convert model config user input data structure to Map<String, String>
             Map<String, String> modelConfigMaps = null;

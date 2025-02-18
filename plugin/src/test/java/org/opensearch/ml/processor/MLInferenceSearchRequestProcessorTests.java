@@ -16,6 +16,7 @@ import static org.opensearch.ml.processor.InferenceProcessorAttributes.OUTPUT_MA
 import static org.opensearch.ml.processor.MLInferenceSearchRequestProcessor.DEFAULT_MAX_PREDICTION_TASKS;
 import static org.opensearch.ml.processor.MLInferenceSearchRequestProcessor.FULL_RESPONSE_PATH;
 import static org.opensearch.ml.processor.MLInferenceSearchRequestProcessor.FUNCTION_NAME;
+import static org.opensearch.ml.processor.MLInferenceSearchRequestProcessor.IGNORE_MISSING;
 import static org.opensearch.ml.processor.MLInferenceSearchRequestProcessor.MODEL_INPUT;
 
 import java.util.ArrayList;
@@ -35,6 +36,7 @@ import org.opensearch.common.xcontent.json.JsonXContent;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.core.xcontent.NamedXContentRegistry;
 import org.opensearch.core.xcontent.XContentParser;
+import org.opensearch.index.query.BoolQueryBuilder;
 import org.opensearch.index.query.QueryBuilder;
 import org.opensearch.index.query.RangeQueryBuilder;
 import org.opensearch.index.query.TermQueryBuilder;
@@ -1028,7 +1030,8 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
         QueryBuilder incomingQuery = new TermQueryBuilder("text", "foo");
         SearchSourceBuilder source = new SearchSourceBuilder().query(incomingQuery);
         SearchRequest request = new SearchRequest().source(source);
-
+        assertEquals(requestProcessor.isIgnoreMissing(), true);
+        assertEquals(requestProcessor.isIgnoreFailure(), false);
         /**
          * example input term query: {"query":{"term":{"text":{"value":"foo","boost":1.0}}}}
          */
@@ -1045,6 +1048,326 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
         };
         requestProcessor.processRequestAsync(request, requestContext, Listener);
 
+    }
+
+    /**
+     * This test case simulates using a multi-modal model input to rewrite a range query.
+     *
+     * The model accepts optional fields, and the `ignoreMissing` flag is set to true.
+     * As a result, the original search request should be returned without any modifications.
+     * @throws Exception if an error occurs during the test
+     */
+    public void testExecute_multiModalIgnoreMissingTrue() throws Exception {
+        /**
+         * sample incoming query
+         * {
+         *   "query": {
+         *     "bool": {
+         *       "should": [
+         *         {
+         *           "term": {
+         *             "text": "foo"
+         *           }
+         *         },
+         *         {
+         *           "term": {
+         *             "image": "bar"
+         *           }
+         *         }
+         *       ],
+         *       "minimum_should_match": 1
+         *     }
+         *   }
+         * }
+         */
+        String modelInputTextField = "inputText";
+        String modelInputImageField = "inputImage";
+        String originalQueryTextField = "query.bool.should[0].term.text.value";
+        // missing field not in the query body
+        String originalQueryVideoField = "query.bool.should[0].term.text.video";
+        String newQueryField = "modelPredictionScore";
+        String modelOutputField = "inputTextTokenCount";
+        String queryTemplate = "{\"query\":{\"range\":{\"text\":{\"gte\":${modelPredictionScore}}}}}";
+
+        List<Map<String, String>> inputMap = new ArrayList<>();
+        Map<String, String> input = new HashMap<>();
+        input.put(modelInputTextField, originalQueryTextField);
+        input.put(modelInputImageField, originalQueryVideoField);
+        inputMap.add(input);
+
+        List<Map<String, String>> outputMap = new ArrayList<>();
+        Map<String, String> output = new HashMap<>();
+        output.put(newQueryField, modelOutputField);
+        outputMap.add(output);
+
+        MLInferenceSearchRequestProcessor requestProcessor = new MLInferenceSearchRequestProcessor(
+            "model1",
+            queryTemplate,
+            inputMap,
+            outputMap,
+            null,
+            DEFAULT_MAX_PREDICTION_TASKS,
+            PROCESSOR_TAG,
+            DESCRIPTION,
+            true,
+            "remote",
+            false,
+            false,
+            "{ \"parameters\": ${ml_inference.parameters} }",
+            client,
+            TEST_XCONTENT_REGISTRY_FOR_QUERY
+        );
+
+        BoolQueryBuilder boolQuery = new BoolQueryBuilder();
+        TermQueryBuilder termQuery1 = new TermQueryBuilder("text", "foo");
+        TermQueryBuilder termQuery2 = new TermQueryBuilder("image", "bar");
+        boolQuery.should(termQuery1);
+        boolQuery.should(termQuery2);
+        boolQuery.minimumShouldMatch(1);
+
+        SearchSourceBuilder source = new SearchSourceBuilder().query(boolQuery);
+        SearchRequest request = new SearchRequest().source(source);
+        assertEquals(requestProcessor.isIgnoreMissing(), true);
+        assertEquals(requestProcessor.isIgnoreFailure(), false);
+
+        ModelTensor modelTensor = ModelTensor.builder().dataAsMap(ImmutableMap.of("inputTextTokenCount", 5)).build();
+        ModelTensors modelTensors = ModelTensors.builder().mlModelTensors(Arrays.asList(modelTensor)).build();
+        ModelTensorOutput mlModelTensorOutput = ModelTensorOutput.builder().mlModelOutputs(Arrays.asList(modelTensors)).build();
+
+        doAnswer(invocation -> {
+            ActionListener<MLTaskResponse> actionListener = invocation.getArgument(2);
+            actionListener.onResponse(MLTaskResponse.builder().output(mlModelTensorOutput).build());
+            return null;
+        }).when(client).execute(any(), any(), any());
+
+        ActionListener<SearchRequest> Listener = new ActionListener<>() {
+            @Override
+            public void onResponse(SearchRequest newSearchRequest) {
+                RangeQueryBuilder rangeQuery = new RangeQueryBuilder("text");
+                rangeQuery.gte(5);
+                assertEquals(newSearchRequest.source().query(), rangeQuery);
+            }
+
+            @Override
+            public void onFailure(Exception ex) {
+                throw new RuntimeException("error handling not properly");
+            }
+        };
+        requestProcessor.processRequestAsync(request, requestContext, Listener);
+    }
+
+    /**
+     * This test case simulates using a multi-modal model input to rewrite a range query.
+     *
+     * The model accepts optional fields, but the `ignoreMissing` flag is set to false.
+     * As a result, the search request is expected to fail due to the missing required field.
+     * @throws Exception if an error occurs during the test
+     */
+    public void testExecute_multiModalIgnoreMissingFalse() throws Exception {
+        /**
+         * sample incoming query
+         * {
+         *   "query": {
+         *     "bool": {
+         *       "should": [
+         *         {
+         *           "term": {
+         *             "text": "foo"
+         *           }
+         *         },
+         *         {
+         *           "term": {
+         *             "image": "bar"
+         *           }
+         *         }
+         *       ],
+         *       "minimum_should_match": 1
+         *     }
+         *   }
+         * }
+         */
+        String modelInputTextField = "inputText";
+        String modelInputImageField = "inputImage";
+        String originalQueryTextField = "query.bool.should[0].term.text.value";
+        // missing field not in the query body
+        String originalQueryVideoField = "query.bool.should[0].term.text.video";
+        String newQueryField = "modelPredictionScore";
+        String modelOutputField = "inputTextTokenCount";
+        String queryTemplate = "{\"query\":{\"range\":{\"text\":{\"gte\":${modelPredictionScore}}}}}";
+
+        List<Map<String, String>> inputMap = new ArrayList<>();
+        Map<String, String> input = new HashMap<>();
+        input.put(modelInputTextField, originalQueryTextField);
+        input.put(modelInputImageField, originalQueryVideoField);
+        inputMap.add(input);
+
+        List<Map<String, String>> outputMap = new ArrayList<>();
+        Map<String, String> output = new HashMap<>();
+        output.put(newQueryField, modelOutputField);
+        outputMap.add(output);
+
+        MLInferenceSearchRequestProcessor requestProcessor = new MLInferenceSearchRequestProcessor(
+            "model1",
+            queryTemplate,
+            inputMap,
+            outputMap,
+            null,
+            DEFAULT_MAX_PREDICTION_TASKS,
+            PROCESSOR_TAG,
+            DESCRIPTION,
+            false,
+            "remote",
+            false,
+            false,
+            "{ \"parameters\": ${ml_inference.parameters} }",
+            client,
+            TEST_XCONTENT_REGISTRY_FOR_QUERY
+        );
+
+        BoolQueryBuilder boolQuery = new BoolQueryBuilder();
+        TermQueryBuilder termQuery1 = new TermQueryBuilder("text", "foo");
+        TermQueryBuilder termQuery2 = new TermQueryBuilder("image", "bar");
+        boolQuery.should(termQuery1);
+        boolQuery.should(termQuery2);
+        boolQuery.minimumShouldMatch(1);
+
+        SearchSourceBuilder source = new SearchSourceBuilder().query(boolQuery);
+        SearchRequest request = new SearchRequest().source(source);
+        assertEquals(requestProcessor.isIgnoreMissing(), false);
+        assertEquals(requestProcessor.isIgnoreFailure(), false);
+
+        ModelTensor modelTensor = ModelTensor.builder().dataAsMap(ImmutableMap.of("inputTextTokenCount", 5)).build();
+        ModelTensors modelTensors = ModelTensors.builder().mlModelTensors(Arrays.asList(modelTensor)).build();
+        ModelTensorOutput mlModelTensorOutput = ModelTensorOutput.builder().mlModelOutputs(Arrays.asList(modelTensors)).build();
+
+        doAnswer(invocation -> {
+            ActionListener<MLTaskResponse> actionListener = invocation.getArgument(2);
+            actionListener.onResponse(MLTaskResponse.builder().output(mlModelTensorOutput).build());
+            return null;
+        }).when(client).execute(any(), any(), any());
+
+        ActionListener<SearchRequest> Listener = new ActionListener<>() {
+            @Override
+            public void onResponse(SearchRequest newSearchRequest) {
+                throw new RuntimeException("error handling not properly");
+            }
+
+            @Override
+            public void onFailure(Exception ex) {
+                assertTrue(ex.getMessage().contains("cannot find field: query.bool.should[0].term.text.video in query string:"));
+            }
+        };
+        requestProcessor.processRequestAsync(request, requestContext, Listener);
+    }
+
+    /**
+     * This test case simulates a situation where the model accepts optional fields.
+     *
+     * Configuration:
+     * - The `ignoreMissing` flag is set to false
+     * - The `ignoreFailure` flag is set to true
+     *
+     * Expected Behavior:
+     * The original query should be returned without any rewrite, despite the missing field,
+     * due to the `ignoreFailure` flag being true.
+     *
+     * @throws Exception if an error occurs during the test
+     */
+    public void testExecute_multiModalIgnoreMissingFalseIgnoreFailureTrue() throws Exception {
+        /**
+         * sample incoming query
+         * {
+         *   "query": {
+         *     "bool": {
+         *       "should": [
+         *         {
+         *           "term": {
+         *             "text": "foo"
+         *           }
+         *         },
+         *         {
+         *           "term": {
+         *             "image": "bar"
+         *           }
+         *         }
+         *       ],
+         *       "minimum_should_match": 1
+         *     }
+         *   }
+         * }
+         */
+        String modelInputTextField = "inputText";
+        String modelInputImageField = "inputImage";
+        String originalQueryTextField = "query.bool.should[0].term.text.value";
+        // missing field not in the query body
+        String originalQueryVideoField = "query.bool.should[0].term.text.video";
+        String newQueryField = "modelPredictionScore";
+        String modelOutputField = "inputTextTokenCount";
+        String queryTemplate = "{\"query\":{\"range\":{\"text\":{\"gte\":${modelPredictionScore}}}}}";
+
+        List<Map<String, String>> inputMap = new ArrayList<>();
+        Map<String, String> input = new HashMap<>();
+        input.put(modelInputTextField, originalQueryTextField);
+        input.put(modelInputImageField, originalQueryVideoField);
+        inputMap.add(input);
+
+        List<Map<String, String>> outputMap = new ArrayList<>();
+        Map<String, String> output = new HashMap<>();
+        output.put(newQueryField, modelOutputField);
+        outputMap.add(output);
+
+        MLInferenceSearchRequestProcessor requestProcessor = new MLInferenceSearchRequestProcessor(
+            "model1",
+            queryTemplate,
+            inputMap,
+            outputMap,
+            null,
+            DEFAULT_MAX_PREDICTION_TASKS,
+            PROCESSOR_TAG,
+            DESCRIPTION,
+            false,
+            "remote",
+            false,
+            true,
+            "{ \"parameters\": ${ml_inference.parameters} }",
+            client,
+            TEST_XCONTENT_REGISTRY_FOR_QUERY
+        );
+
+        BoolQueryBuilder boolQuery = new BoolQueryBuilder();
+        TermQueryBuilder termQuery1 = new TermQueryBuilder("text", "foo");
+        TermQueryBuilder termQuery2 = new TermQueryBuilder("image", "bar");
+        boolQuery.should(termQuery1);
+        boolQuery.should(termQuery2);
+        boolQuery.minimumShouldMatch(1);
+
+        SearchSourceBuilder source = new SearchSourceBuilder().query(boolQuery);
+        SearchRequest request = new SearchRequest().source(source);
+        assertEquals(requestProcessor.isIgnoreMissing(), false);
+        assertEquals(requestProcessor.isIgnoreFailure(), true);
+
+        ModelTensor modelTensor = ModelTensor.builder().dataAsMap(ImmutableMap.of("inputTextTokenCount", 5)).build();
+        ModelTensors modelTensors = ModelTensors.builder().mlModelTensors(Arrays.asList(modelTensor)).build();
+        ModelTensorOutput mlModelTensorOutput = ModelTensorOutput.builder().mlModelOutputs(Arrays.asList(modelTensors)).build();
+
+        doAnswer(invocation -> {
+            ActionListener<MLTaskResponse> actionListener = invocation.getArgument(2);
+            actionListener.onResponse(MLTaskResponse.builder().output(mlModelTensorOutput).build());
+            return null;
+        }).when(client).execute(any(), any(), any());
+
+        ActionListener<SearchRequest> Listener = new ActionListener<>() {
+            @Override
+            public void onResponse(SearchRequest newSearchRequest) {
+                assertEquals(newSearchRequest.source().query(), boolQuery);
+            }
+
+            @Override
+            public void onFailure(Exception ex) {
+                throw new RuntimeException("error handling not properly");
+            }
+        };
+        requestProcessor.processRequestAsync(request, requestContext, Listener);
     }
 
     /**
@@ -1422,7 +1745,7 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
 
     /**
      * Tests the creation of the MLInferenceSearchRequestProcessor with required fields.
-     *
+     * default ignoreMissing is false and default ignoreFailure is false
      * @throws Exception if an error occurs during the test
      */
     public void testCreateRequiredFields() throws Exception {
@@ -1444,6 +1767,66 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
         assertNotNull(MLInferenceSearchRequestProcessor);
         assertEquals(MLInferenceSearchRequestProcessor.getTag(), processorTag);
         assertEquals(MLInferenceSearchRequestProcessor.getType(), MLInferenceSearchRequestProcessor.TYPE);
+        assertEquals(MLInferenceSearchRequestProcessor.isIgnoreMissing(), false);
+        assertEquals(MLInferenceSearchRequestProcessor.isIgnoreFailure(), false);
+    }
+
+    /**
+     * Tests the creation of the MLInferenceSearchRequestProcessor with required fields.
+     * when ignoreMissing is false and ignoreFailure is true
+     * @throws Exception if an error occurs during the test
+     */
+    public void testCreateRequiredFieldsIgnoreMissingFalse() throws Exception {
+        Map<String, Object> config = new HashMap<>();
+        config.put(MODEL_ID, "model1");
+        List<Map<String, String>> inputMap = new ArrayList<>();
+        Map<String, String> input = new HashMap<>();
+        input.put("text_docs", "text");
+        inputMap.add(input);
+        List<Map<String, String>> outputMap = new ArrayList<>();
+        Map<String, String> output = new HashMap<>();
+        output.put("text_embedding", "$.inference_results[0].output[0].data");
+        outputMap.add(output);
+        config.put(INPUT_MAP, inputMap);
+        config.put(OUTPUT_MAP, outputMap);
+        String processorTag = randomAlphaOfLength(10);
+        MLInferenceSearchRequestProcessor MLInferenceSearchRequestProcessor = factory
+            .create(Collections.emptyMap(), processorTag, null, true, config, null);
+        assertNotNull(MLInferenceSearchRequestProcessor);
+        assertEquals(MLInferenceSearchRequestProcessor.getTag(), processorTag);
+        assertEquals(MLInferenceSearchRequestProcessor.getType(), MLInferenceSearchRequestProcessor.TYPE);
+        assertEquals(MLInferenceSearchRequestProcessor.isIgnoreMissing(), false);
+        assertEquals(MLInferenceSearchRequestProcessor.isIgnoreFailure(), true);
+
+    }
+
+    /**
+     * Tests the creation of the MLInferenceSearchRequestProcessor with required fields.
+     * when ignoreMissing is true and ignoreFailure is true
+     * @throws Exception if an error occurs during the test
+     */
+    public void testCreateRequiredFieldsIgnoreMissingTrue() throws Exception {
+        Map<String, Object> config = new HashMap<>();
+        config.put(MODEL_ID, "model1");
+        List<Map<String, String>> inputMap = new ArrayList<>();
+        Map<String, String> input = new HashMap<>();
+        input.put("text_docs", "text");
+        inputMap.add(input);
+        List<Map<String, String>> outputMap = new ArrayList<>();
+        Map<String, String> output = new HashMap<>();
+        output.put("text_embedding", "$.inference_results[0].output[0].data");
+        outputMap.add(output);
+        config.put(INPUT_MAP, inputMap);
+        config.put(OUTPUT_MAP, outputMap);
+        String processorTag = randomAlphaOfLength(10);
+        config.put(IGNORE_MISSING, true);
+        MLInferenceSearchRequestProcessor MLInferenceSearchRequestProcessor = factory
+            .create(Collections.emptyMap(), processorTag, null, true, config, null);
+        assertNotNull(MLInferenceSearchRequestProcessor);
+        assertEquals(MLInferenceSearchRequestProcessor.getTag(), processorTag);
+        assertEquals(MLInferenceSearchRequestProcessor.getType(), MLInferenceSearchRequestProcessor.TYPE);
+        assertEquals(MLInferenceSearchRequestProcessor.isIgnoreMissing(), true);
+        assertEquals(MLInferenceSearchRequestProcessor.isIgnoreFailure(), true);
     }
 
     /**
@@ -1478,6 +1861,8 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
         assertNotNull(MLInferenceSearchRequestProcessor);
         assertEquals(MLInferenceSearchRequestProcessor.getTag(), processorTag);
         assertEquals(MLInferenceSearchRequestProcessor.getType(), MLInferenceSearchRequestProcessor.TYPE);
+        assertEquals(MLInferenceSearchRequestProcessor.isIgnoreMissing(), false);
+        assertEquals(MLInferenceSearchRequestProcessor.isIgnoreFailure(), false);
     }
 
     /**
@@ -1673,11 +2058,14 @@ public class MLInferenceSearchRequestProcessorTests extends AbstractBuilderTestC
         config.put(OUTPUT_MAP, outputMap);
         config.put(MAX_PREDICTION_TASKS, 5);
         String processorTag = randomAlphaOfLength(10);
-
+        String descriptionString = "in testing";
         MLInferenceSearchRequestProcessor MLInferenceSearchRequestProcessor = factory
-            .create(Collections.emptyMap(), processorTag, null, false, config, null);
+            .create(Collections.emptyMap(), processorTag, descriptionString, false, config, null);
         assertNotNull(MLInferenceSearchRequestProcessor);
         assertEquals(MLInferenceSearchRequestProcessor.getTag(), processorTag);
         assertEquals(MLInferenceSearchRequestProcessor.getType(), MLInferenceSearchRequestProcessor.TYPE);
+        assertEquals(MLInferenceSearchRequestProcessor.getDescription(), descriptionString);
+        assertEquals(MLInferenceSearchRequestProcessor.isIgnoreMissing(), false);
+        assertEquals(MLInferenceSearchRequestProcessor.isIgnoreFailure(), false);
     }
 }
