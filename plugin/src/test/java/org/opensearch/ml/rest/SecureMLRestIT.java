@@ -153,7 +153,6 @@ public class SecureMLRestIT extends MLCommonsRestTestCase {
 
         // Create public model group
         mlRegisterModelGroupInput = createRegisterModelGroupInput("modelGroupName", null, AccessMode.PUBLIC, false);
-
         registerModelGroup(mlFullAccessClient, TestHelper.toJsonString(mlRegisterModelGroupInput), registerModelGroupResult -> {
             this.modelGroupId = (String) registerModelGroupResult.get("model_group_id");
         });
@@ -402,6 +401,7 @@ public class SecureMLRestIT extends MLCommonsRestTestCase {
     }
 
     public void testTrainWithReadOnlyMLAccess() throws IOException {
+        // create a model in the cluster
         exceptionRule.expect(ResponseException.class);
         exceptionRule.expectMessage("no permissions for [cluster:admin/opensearch/ml/train]");
         KMeansParams kMeansParams = KMeansParams.builder().build();
@@ -409,6 +409,8 @@ public class SecureMLRestIT extends MLCommonsRestTestCase {
     }
 
     public void testPredictWithReadOnlyMLAccess() throws IOException {
+        // create a model in the cluster
+        testRegisterModelWithFullAccess();
         exceptionRule.expect(ResponseException.class);
         exceptionRule.expectMessage("no permissions for [cluster:admin/opensearch/ml/predict]");
         KMeansParams kMeansParams = KMeansParams.builder().build();
