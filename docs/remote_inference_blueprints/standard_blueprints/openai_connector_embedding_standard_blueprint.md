@@ -6,6 +6,8 @@ Note that if using a model that requires pre and post processing functions, you 
 
 ## 1. Add connector endpoint to trusted URLs:
 
+Note: no need to do this after 2.11.0
+
 ```json
 PUT /_cluster/settings
 {
@@ -14,6 +16,23 @@ PUT /_cluster/settings
       "^https://api\\.openai\\.com/.*$"
     ]
   }
+}
+```
+
+Sample response:
+```json
+{
+    "acknowledged": true,
+    "persistent": {
+        "plugins": {
+            "ml_commons": {
+                "trusted_connector_endpoints_regex": [
+                    "^https://api\\.openai\\.com/.*$"
+                ]
+            }
+        }
+    },
+    "transient": {}
 }
 ```
 

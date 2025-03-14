@@ -11,6 +11,8 @@ See [Cohere's /embed API docs](https://docs.cohere.com/reference/embed) for more
 
 ## 1. Add connector endpoint to trusted URLs:
 
+Note: no need to do this after 2.11.0
+
 ```json
 PUT /_cluster/settings
 {

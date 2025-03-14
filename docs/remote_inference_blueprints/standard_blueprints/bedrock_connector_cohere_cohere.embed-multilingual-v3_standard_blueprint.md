@@ -18,6 +18,22 @@ PUT /_cluster/settings
 }
 ```
 
+Sample response:
+```json
+{
+  "acknowledged": true,
+  "persistent": {
+    "plugins": {
+      "ml_commons": {
+        "trusted_connector_endpoints_regex": [
+          "^https://bedrock-runtime\\..*[a-z0-9-]\\.amazonaws\\.com/.*$"
+        ]
+      }
+    }
+  },
+  "transient": {}
+}
+```
 
 ## 2. Create connector for Amazon Bedrock:
 

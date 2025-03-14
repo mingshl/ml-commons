@@ -126,8 +126,7 @@ Sample response:
 
 Follow Titan text embedding model v1, just change "model" to `amazon.titan-embed-text-v2:0` and configure extra parameters and request body as:
 
-
-```
+```json
 POST /_plugins/_ml/connectors/_create
 {
   "name": "Amazon Bedrock Connector: embedding",
@@ -154,9 +153,10 @@ POST /_plugins/_ml/connectors/_create
       "url": "https://bedrock-runtime.${parameters.region}.amazonaws.com/model/${parameters.model}/invoke",
       "headers": {
         "content-type": "application/json",
-        "x-amz-content-sha256": "required"   "request_body": "{ \"inputText\": \"${parameters.inputText}\", \"dimensions\": ${parameters.dimensions}, \"normalize\": ${parameters.normalize}, \"embeddingTypes\": ${parameters.embeddingTypes} }"
-  
+        "x-amz-content-sha256": "required"
       },
+        "request_body": "{ \"inputText\": \"${parameters.inputText}\", \"dimensions\": ${parameters.dimensions}, \"normalize\": ${parameters.normalize}, \"embeddingTypes\": ${parameters.embeddingTypes} }"
+      }
      }
   ]
 }
