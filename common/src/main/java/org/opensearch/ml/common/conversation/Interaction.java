@@ -253,5 +253,28 @@ public class Interaction implements Writeable, ToXContentObject {
             + traceNum
             + "}";
     }
+    public Map<String, Object> toMap() {
+        Map<String, Object> map = new HashMap<>();
+        map.put(ConversationalIndexConstants.INTERACTIONS_CONVERSATION_ID_FIELD, id);
+        map.put(ConversationalIndexConstants.INTERACTIONS_CREATE_TIME_FIELD, createTime.toString());
+        map.put(ConversationalIndexConstants.INTERACTIONS_CONVERSATION_ID_FIELD, conversationId);
+        map.put(ConversationalIndexConstants.INTERACTIONS_INPUT_FIELD, input);
+        map.put(ConversationalIndexConstants.INTERACTIONS_PROMPT_TEMPLATE_FIELD, promptTemplate);
+        map.put(ConversationalIndexConstants.INTERACTIONS_RESPONSE_FIELD, response);
+        map.put(ConversationalIndexConstants.INTERACTIONS_ORIGIN_FIELD, origin);
 
+        if (additionalInfo != null) {
+            map.put(ConversationalIndexConstants.INTERACTIONS_ADDITIONAL_INFO_FIELD, additionalInfo);
+        }
+
+        if (parentInteractionId != null) {
+            map.put(ConversationalIndexConstants.PARENT_INTERACTIONS_ID_FIELD, parentInteractionId);
+        }
+
+        if (traceNum != null) {
+            map.put(ConversationalIndexConstants.INTERACTIONS_TRACE_NUMBER_FIELD, traceNum);
+        }
+
+        return map;
+    }
 }

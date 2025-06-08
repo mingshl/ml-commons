@@ -6,6 +6,7 @@
 package org.opensearch.ml.processor;
 
 import static java.lang.Math.max;
+import static jdk.jfr.internal.Options.DEFAULT_MEMORY_SIZE;
 import static org.opensearch.ml.common.utils.StringUtils.toJson;
 import static org.opensearch.ml.processor.InferenceProcessorAttributes.INPUT_MAP;
 import static org.opensearch.ml.processor.InferenceProcessorAttributes.MAX_PREDICTION_TASKS;
@@ -15,13 +16,19 @@ import static org.opensearch.ml.processor.InferenceProcessorAttributes.OUTPUT_MA
 import static org.opensearch.ml.processor.MLInferenceIngestProcessor.OVERRIDE;
 import static org.opensearch.ml.processor.MLInferenceSearchRequestProcessor.OPTIONAL_INPUT_MAP;
 import static org.opensearch.ml.processor.MLInferenceSearchRequestProcessor.OPTIONAL_OUTPUT_MAP;
+import static org.opensearch.ml.processor.MemorySearchResponseProcessor.READ_ACTION_TYPE;
+import static org.opensearch.ml.processor.MemorySearchResponseProcessor.SAVE_ACTION_TYPE;
+import static org.opensearch.searchpipelines.questionanswering.generative.GenerativeQAResponseProcessor.DEFAULT_CHAT_HISTORY_WINDOW;
+import static org.opensearch.searchpipelines.questionanswering.generative.ext.GenerativeQAParamExtBuilder.PARAMETER_NAME;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -57,6 +64,7 @@ import org.opensearch.search.pipeline.AbstractProcessor;
 import org.opensearch.search.pipeline.PipelineProcessingContext;
 import org.opensearch.search.pipeline.Processor;
 import org.opensearch.search.pipeline.SearchResponseProcessor;
+import org.opensearch.searchpipelines.questionanswering.generative.client.ConversationalMemoryClient;
 import org.opensearch.transport.client.Client;
 
 import com.jayway.jsonpath.JsonPath;
@@ -94,10 +102,18 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
     // allow to write to the extension of the search response, the path to point to search extension
     // is prefix with ext.ml_inference
     public static final String EXTENSION_PREFIX = "ext.ml_inference";
+    public static final String CONVERSATIONAL = "conversational";
+    public static final String MEMORY_ID = "memory_id";
+    public static final String MEMORY_SIZE = "memory_size";
+    public static final String LLM_MODEL = "llm_model";
     @Getter
     private final List<Map<String, String>> optionalInputMaps;
     @Getter
     private final List<Map<String, String>> optionalOutputMaps;
+    @Getter
+    MemorySearchResponseProcessor readMemoryProcessor;
+    @Getter
+    MemorySearchResponseProcessor saveMemoryProcessor;
 
     protected MLInferenceSearchResponseProcessor(
         String modelId,
@@ -117,8 +133,10 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
         String modelInput,
         Client client,
         NamedXContentRegistry xContentRegistry,
-        boolean oneToOne
-    ) {
+        boolean oneToOne,
+        MemorySearchResponseProcessor readMemoryProcessor,
+        MemorySearchResponseProcessor saveMemoryProcessor
+        ) {
         super(tag, description, ignoreFailure);
         this.oneToOne = oneToOne;
         this.inferenceProcessorAttributes = new InferenceProcessorAttributes(
@@ -138,7 +156,10 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
         this.modelInput = modelInput;
         this.client = client;
         this.xContentRegistry = xContentRegistry;
+        this.readMemoryProcessor = readMemoryProcessor;
+        this.saveMemoryProcessor = saveMemoryProcessor;
     }
+
 
     @Override
     public SearchResponse processResponse(SearchRequest request, SearchResponse response) throws Exception {
@@ -176,6 +197,10 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
                 return;
             }
 
+
+            readMemoryProcessor.processResponseAsync(request,response,responseContext,responseListener);
+            // TODO Check if predictions take in responseContext
+
             setRequestContextFromExt(request, responseContext);
 
             // if many to one, run rewriteResponseDocuments
@@ -201,7 +226,7 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
                     );
                 }
 
-                rewriteResponseDocuments(mlInferenceSearchResponse, responseListener, queryString);
+                rewriteResponseDocuments(mlInferenceSearchResponse, responseListener, queryString,responseContext);
             } else {
                 // if one to one, make one hit search response and run rewriteResponseDocuments
                 GroupedActionListener<SearchResponse> combineResponseListener = getCombineResponseGroupedActionListener(
@@ -216,7 +241,7 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
                     newHits[0] = hit;
                     SearchResponse oneHitResponse = SearchResponseUtil.replaceHits(newHits, response);
                     ActionListener<SearchResponse> oneHitListener = getOneHitListener(combineResponseListener, isOneHitListenerFailed);
-                    rewriteResponseDocuments(oneHitResponse, oneHitListener, queryString);
+                    rewriteResponseDocuments(oneHitResponse, oneHitListener, queryString,responseContext);
                     // if any OneHitListener failure, try stop the rest of the predictions
                     if (isOneHitListenerFailed.get()) {
                         break;
@@ -326,7 +351,7 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
      * @param queryString      the query body in string format, for example, "{ \"query\": { \"match_all\": {} } }\n"
      * @throws IOException if an I/O error occurs during the rewriting process
      */
-    private void rewriteResponseDocuments(SearchResponse response, ActionListener<SearchResponse> responseListener, String queryString)
+    private void rewriteResponseDocuments(SearchResponse response, ActionListener<SearchResponse> responseListener, String queryString,PipelineProcessingContext responseContext)
         throws IOException {
         List<Map<String, String>> processInputMap = inferenceProcessorAttributes.getInputMaps();
         List<Map<String, String>> processOutputMap = inferenceProcessorAttributes.getOutputMaps();
@@ -346,7 +371,8 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
             processInputMap,
             combinedInputMaps,
             combinedOutputMaps,
-            hitCountInPredictions
+            hitCountInPredictions,
+            responseContext
         );
 
         GroupedActionListener<Map<Integer, MLOutput>> batchPredictionListener = createBatchPredictionListener(
@@ -577,7 +603,8 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
         List<Map<String, String>> requiredInputFields,
         List<Map<String, String>> processInputMap,
         List<Map<String, String>> processOutputMap,
-        Map<Integer, Integer> hitCountInPredictions
+        Map<Integer, Integer> hitCountInPredictions,
+        PipelineProcessingContext responseContext
     ) {
         return new ActionListener<>() {
             @Override
@@ -599,6 +626,7 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
                             for (Map.Entry<Integer, MLOutput> entry : multipleMLOutputs.entrySet()) {
                                 Integer mappingIndex = entry.getKey();
                                 MLOutput mlOutput = entry.getValue();
+//                                responseContext("ml_output_" + mappingIndex, mlOutput);
                                 Map<String, String> outputMapping = getDefaultOutputMapping(mappingIndex, processOutputMap);
                                 Map<String, String> requiredInputMapping;
                                 if (requiredInputFields != null && requiredInputFields.size() > mappingIndex) {
@@ -617,7 +645,10 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
 
                                         String newDocumentFieldName = outputMapEntry.getKey();
                                         String modelOutputFieldName = outputMapEntry.getValue();
-
+                                        //TODO to add support for one-to-one mapping
+                                        if(!oneToOne){
+                                            responseContext.setAttribute(newDocumentFieldName,modelOutputFieldName);
+                                        }
                                         MapUtils.incrementCounter(writeOutputMapDocCounter, mappingIndex, modelOutputFieldName);
 
                                         Object modelOutputValue = getModelOutputValue(
@@ -684,6 +715,12 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
 
                         }
                     }
+
+                    //after document rewriting, run saveMemoryProcessor
+                    if(!oneToOne) {
+                        saveMemoryProcessor.processResponseAsync(null,response,responseContext,responseListener);
+                    }
+
                 } catch (Exception e) {
                     if (ignoreFailure) {
                         responseListener.onResponse(response);
@@ -823,6 +860,7 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
      * This class implements the Processor.Factory interface for creating SearchResponseProcessor instances.
      */
     public static class Factory implements Processor.Factory<SearchResponseProcessor> {
+        private static final Integer DEFAULT_MEMORY_SIZE = 10;
         private final Client client;
         private final NamedXContentRegistry xContentRegistry;
 
@@ -864,15 +902,15 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
             List<Map<String, String>> outputMaps = ConfigurationUtils.readOptionalList(TYPE, processorTag, config, OUTPUT_MAP);
 
             List<Map<String, String>> optionalInputMaps = ConfigurationUtils
-                .readOptionalList(TYPE, processorTag, config, OPTIONAL_INPUT_MAP);
+                    .readOptionalList(TYPE, processorTag, config, OPTIONAL_INPUT_MAP);
             List<Map<String, String>> optionalOutputMaps = ConfigurationUtils
-                .readOptionalList(TYPE, processorTag, config, OPTIONAL_OUTPUT_MAP);
+                    .readOptionalList(TYPE, processorTag, config, OPTIONAL_OUTPUT_MAP);
 
             int maxPredictionTask = ConfigurationUtils
-                .readIntProperty(TYPE, processorTag, config, MAX_PREDICTION_TASKS, DEFAULT_MAX_PREDICTION_TASKS);
+                    .readIntProperty(TYPE, processorTag, config, MAX_PREDICTION_TASKS, DEFAULT_MAX_PREDICTION_TASKS);
             boolean ignoreMissing = ConfigurationUtils.readBooleanProperty(TYPE, processorTag, config, IGNORE_MISSING, false);
             String functionName = ConfigurationUtils
-                .readStringProperty(TYPE, processorTag, config, FUNCTION_NAME, FunctionName.REMOTE.name());
+                    .readStringProperty(TYPE, processorTag, config, FUNCTION_NAME, FunctionName.REMOTE.name());
             boolean override = ConfigurationUtils.readBooleanProperty(TYPE, processorTag, config, OVERRIDE, false);
             boolean oneToOne = ConfigurationUtils.readBooleanProperty(TYPE, processorTag, config, ONE_TO_ONE, false);
 
@@ -887,7 +925,7 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
             }
             boolean defaultFullResponsePath = !functionName.equalsIgnoreCase(FunctionName.REMOTE.name());
             boolean fullResponsePath = ConfigurationUtils
-                .readBooleanProperty(TYPE, processorTag, config, FULL_RESPONSE_PATH, defaultFullResponsePath);
+                    .readBooleanProperty(TYPE, processorTag, config, FULL_RESPONSE_PATH, defaultFullResponsePath);
 
             // convert model config user input data structure to Map<String, String>
             Map<String, String> modelConfigMaps = null;
@@ -903,23 +941,23 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
             // check if the number of prediction tasks exceeds max prediction tasks
             if (combinedInputMaps != null && combinedInputMaps.size() > maxPredictionTask) {
                 throw new IllegalArgumentException(
-                    "The number of prediction task setting in this process is "
-                        + combinedInputMaps.size()
-                        + ". It exceeds the max_prediction_tasks of "
-                        + maxPredictionTask
-                        + ". Please reduce the size of input_map or optional_input_map or increase max_prediction_tasks."
+                        "The number of prediction task setting in this process is "
+                                + combinedInputMaps.size()
+                                + ". It exceeds the max_prediction_tasks of "
+                                + maxPredictionTask
+                                + ". Please reduce the size of input_map or optional_input_map or increase max_prediction_tasks."
                 );
             }
 
             if (!CollectionUtils.isEmpty(combinedOutputMaps)
-                && !CollectionUtils.isEmpty(combinedInputMaps)
-                && combinedOutputMaps.size() != combinedInputMaps.size()) {
+                    && !CollectionUtils.isEmpty(combinedInputMaps)
+                    && combinedOutputMaps.size() != combinedInputMaps.size()) {
                 throw new IllegalArgumentException(
-                    "when output_maps/optional_output_maps and input_maps/optional_input_maps are provided, their length needs to match. The input is in length of "
-                        + combinedInputMaps.size()
-                        + ", while output_maps is in the length of "
-                        + combinedOutputMaps.size()
-                        + ". Please adjust mappings."
+                        "when output_maps/optional_output_maps and input_maps/optional_input_maps are provided, their length needs to match. The input is in length of "
+                                + combinedInputMaps.size()
+                                + ", while output_maps is in the length of "
+                                + combinedOutputMaps.size()
+                                + ". Please adjust mappings."
                 );
             }
 
@@ -927,37 +965,109 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
 
             if (outputMaps != null) {
                 writeToSearchExtension = outputMaps
-                    .stream()
-                    .filter(Objects::nonNull) // To avoid potential NullPointerExceptions from null outputMaps
-                    .flatMap(outputMap -> outputMap.keySet().stream())
-                    .anyMatch(key -> key.startsWith(EXTENSION_PREFIX));
+                        .stream()
+                        .filter(Objects::nonNull) // To avoid potential NullPointerExceptions from null outputMaps
+                        .flatMap(outputMap -> outputMap.keySet().stream())
+                        .anyMatch(key -> key.startsWith(EXTENSION_PREFIX));
             }
 
             if (writeToSearchExtension & oneToOne) {
                 throw new IllegalArgumentException("Write model response to search extension does not support when one_to_one is true.");
             }
 
+            Map<String, Object> conversational = ConfigurationUtils.readOptionalMap(TYPE, processorTag, config, CONVERSATIONAL);
+
+            // Validate conversational parameters if present
+            // if conversational is not null, it means the processor is configured for conversational AI
+            // we use the settings to populate the Read MemorySearchResponseProcessor and Save MemorySearchResponseProcessor
+            // Run MemorySearchResponseProcessor before MLInferenceSearchResponseProcessor
+            // and Run SaveMemorySearchResponseProcessor after MLInferenceSearchResponseProcessor
+            MemorySearchResponseProcessor readMemoryProcessor = null;
+            MemorySearchResponseProcessor saveMemoryProcessor = null;
+            if (conversational != null) {
+                if (oneToOne) {
+                    throw new IllegalArgumentException("Conversational search is not support when one_to_one is true.");
+                }
+
+                // Validate required fields
+                Integer memorySize;
+                String llmModel;
+                String memoryId
+                if (!conversational.containsKey(MEMORY_ID)) {
+                    //TODO generate a memory_id if not provided
+                    throw new IllegalArgumentException("memory_id is required in conversational settings");
+                } else {
+                     memoryId = (String) conversational.get(MEMORY_ID);
+                }
+
+                if (!conversational.containsKey(MEMORY_SIZE)) {
+                    memorySize = DEFAULT_MEMORY_SIZE;
+                } else {
+                    memorySize = (Integer) conversational.get(MEMORY_SIZE);
+                }
+
+                if (!conversational.containsKey(LLM_MODEL)) {
+                    llmModel = null;
+                } else {
+                    llmModel = (String) conversational.get(LLM_MODEL);
+                }
+
+                // Validate memory_size is positive
+//                int memorySize = ((Number) conversational.get(MEMORY_SIZE)).intValue();
+                if (memorySize <= 0) {
+                    throw new IllegalArgumentException("memory_size must be positive");
+                }
+                Map<String, Object> memoryConfig = new HashMap<>();
+                MemorySearchResponseProcessor.Factory MemorySearchResponseProcessorFactory = new MemorySearchResponseProcessor.Factory(client);
+
+
+                //TODO to add the logic for reading memoryConfig for known llm_models.
+                memoryConfig= LLMMemoryProcessorConfigUtils.getConfigs(llmModel,memoryId, memorySize);
+                readMemoryProcessor = MemorySearchResponseProcessorFactory.create(
+                        null,
+                        "read_memory",
+                        "read_memory_processor",
+                        ignoreFailure,
+                        (Map<String, Object>) memoryConfig.get(READ_ACTION_TYPE),
+                        pipelineContext
+                );
+                saveMemoryProcessor = MemorySearchResponseProcessorFactory.create(
+                        null,
+                        "save_memory",
+                        "save_memory_processor",
+                        ignoreFailure,
+                        (Map<String, Object>) memoryConfig.get(SAVE_ACTION_TYPE),
+                        pipelineContext
+                );
+                modelConfigMaps.putAll(memoryConfig.get(MODEL_CONFIG) instanceof Map
+                        ? (Map<String, String>) memoryConfig.get(MODEL_CONFIG)
+                        : Collections.emptyMap());
+
+            }
             return new MLInferenceSearchResponseProcessor(
-                modelId,
-                inputMaps,
-                outputMaps,
-                optionalInputMaps,
-                optionalOutputMaps,
-                modelConfigMaps,
-                maxPredictionTask,
-                processorTag,
-                description,
-                ignoreMissing,
-                functionName,
-                fullResponsePath,
-                ignoreFailure,
-                override,
-                modelInput,
-                client,
-                xContentRegistry,
-                oneToOne
+                    modelId,
+                    inputMaps,
+                    outputMaps,
+                    optionalInputMaps,
+                    optionalOutputMaps,
+                    modelConfigMaps,
+                    maxPredictionTask,
+                    processorTag,
+                    description,
+                    ignoreMissing,
+                    functionName,
+                    fullResponsePath,
+                    ignoreFailure,
+                    override,
+                    modelInput,
+                    client,
+                    xContentRegistry,
+                    oneToOne,
+                    readMemoryProcessor,
+                    saveMemoryProcessor
             );
         }
-    }
 
+
+}
 }
