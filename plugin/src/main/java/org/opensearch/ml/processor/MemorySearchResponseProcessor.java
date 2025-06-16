@@ -1,5 +1,6 @@
 package org.opensearch.ml.processor;
 import com.jayway.jsonpath.internal.function.ParamType;
+import lombok.Getter;
 import org.apache.commons.text.StringSubstitutor;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -43,12 +44,18 @@ public class MemorySearchResponseProcessor extends AbstractProcessor implements 
     public static final String REQUEST_BODY = "request_body";
     public static final String MESSAGE_SIZE = "message_size";
     private static final int DEFAULT_MESSAGE_SIZE = 10;
-
+    @Getter
     private final String actionType;
+    @Getter
     private final String memoryId;
+    @Getter
     private final String requestBody;
+    @Getter
     private final int messageSize;
+
     private final Client client;
+    //TODO for testing only
+    @Getter
     private final ConversationalMemoryClient memoryClient;
     private final boolean ignoreFailure;
 

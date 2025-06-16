@@ -6,7 +6,6 @@
 package org.opensearch.ml.processor;
 
 import static java.lang.Math.max;
-import static jdk.jfr.internal.Options.DEFAULT_MEMORY_SIZE;
 import static org.opensearch.ml.common.utils.StringUtils.toJson;
 import static org.opensearch.ml.processor.InferenceProcessorAttributes.INPUT_MAP;
 import static org.opensearch.ml.processor.InferenceProcessorAttributes.MAX_PREDICTION_TASKS;
@@ -18,8 +17,6 @@ import static org.opensearch.ml.processor.MLInferenceSearchRequestProcessor.OPTI
 import static org.opensearch.ml.processor.MLInferenceSearchRequestProcessor.OPTIONAL_OUTPUT_MAP;
 import static org.opensearch.ml.processor.MemorySearchResponseProcessor.READ_ACTION_TYPE;
 import static org.opensearch.ml.processor.MemorySearchResponseProcessor.SAVE_ACTION_TYPE;
-import static org.opensearch.searchpipelines.questionanswering.generative.GenerativeQAResponseProcessor.DEFAULT_CHAT_HISTORY_WINDOW;
-import static org.opensearch.searchpipelines.questionanswering.generative.ext.GenerativeQAParamExtBuilder.PARAMETER_NAME;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -992,7 +989,7 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
                 // Validate required fields
                 Integer memorySize;
                 String llmModel;
-                String memoryId
+                String memoryId;
                 if (!conversational.containsKey(MEMORY_ID)) {
                     //TODO generate a memory_id if not provided
                     throw new IllegalArgumentException("memory_id is required in conversational settings");
@@ -1039,6 +1036,9 @@ public class MLInferenceSearchResponseProcessor extends AbstractProcessor implem
                         (Map<String, Object>) memoryConfig.get(SAVE_ACTION_TYPE),
                         pipelineContext
                 );
+                if (modelConfigMaps == null) {
+                    modelConfigMaps = new HashMap<>();
+                }
                 modelConfigMaps.putAll(memoryConfig.get(MODEL_CONFIG) instanceof Map
                         ? (Map<String, String>) memoryConfig.get(MODEL_CONFIG)
                         : Collections.emptyMap());

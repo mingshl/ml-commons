@@ -20,13 +20,21 @@ import static org.opensearch.ml.processor.InferenceProcessorAttributes.MODEL_ID;
 import static org.opensearch.ml.processor.InferenceProcessorAttributes.OUTPUT_MAP;
 import static org.opensearch.ml.processor.MLInferenceSearchRequestProcessor.OPTIONAL_INPUT_MAP;
 import static org.opensearch.ml.processor.MLInferenceSearchRequestProcessor.OPTIONAL_OUTPUT_MAP;
+import static org.opensearch.ml.processor.MLInferenceSearchResponseProcessor.CONVERSATIONAL;
 import static org.opensearch.ml.processor.MLInferenceSearchResponseProcessor.DEFAULT_MAX_PREDICTION_TASKS;
 import static org.opensearch.ml.processor.MLInferenceSearchResponseProcessor.DEFAULT_OUTPUT_FIELD_NAME;
 import static org.opensearch.ml.processor.MLInferenceSearchResponseProcessor.FULL_RESPONSE_PATH;
 import static org.opensearch.ml.processor.MLInferenceSearchResponseProcessor.FUNCTION_NAME;
+import static org.opensearch.ml.processor.MLInferenceSearchResponseProcessor.LLM_MODEL;
+import static org.opensearch.ml.processor.MLInferenceSearchResponseProcessor.MEMORY_SIZE;
 import static org.opensearch.ml.processor.MLInferenceSearchResponseProcessor.MODEL_INPUT;
 import static org.opensearch.ml.processor.MLInferenceSearchResponseProcessor.ONE_TO_ONE;
 import static org.opensearch.ml.processor.MLInferenceSearchResponseProcessor.TYPE;
+import static org.opensearch.ml.processor.MLInferenceSearchResponseProcessor.MEMORY_ID;
+import static org.opensearch.ml.processor.MLInferenceSearchResponseProcessor.MEMORY_SIZE;
+import static org.opensearch.ml.processor.MLInferenceSearchResponseProcessor.LLM_MODEL;
+import static org.opensearch.ml.processor.MemorySearchResponseProcessor.READ_ACTION_TYPE;
+import static org.opensearch.ml.processor.MemorySearchResponseProcessor.SAVE_ACTION_TYPE;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -55,7 +63,9 @@ import org.opensearch.core.common.bytes.BytesArray;
 import org.opensearch.core.rest.RestStatus;
 import org.opensearch.core.xcontent.NamedXContentRegistry;
 import org.opensearch.index.query.QueryBuilder;
+import org.opensearch.index.query.QueryBuilders;
 import org.opensearch.index.query.TermQueryBuilder;
+import org.opensearch.index.search.MatchQuery;
 import org.opensearch.ml.common.dataset.TextSimilarityInputDataSet;
 import org.opensearch.ml.common.dataset.remote.RemoteInferenceInputDataSet;
 import org.opensearch.ml.common.exception.MLResourceNotFoundException;
@@ -225,7 +235,8 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"query_text\": \"${input_map.query_text}\", \"text_docs\":${input_map.text_docs}}",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false,
+                null, null
         );
         assertEquals(responseProcessor.getType(), TYPE);
         SearchRequest request = getSearchRequest();
@@ -314,7 +325,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false,null, null
         );
         assertEquals(responseProcessor.getType(), TYPE);
         SearchRequest request = getSearchRequest();
@@ -404,7 +415,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false,null, null
         );
         assertEquals(responseProcessor.getType(), TYPE);
         SearchRequest request = getSearchRequest();
@@ -484,7 +495,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false,null, null
         );
         assertEquals(responseProcessor.getType(), TYPE);
         SearchRequest request = getSearchRequest();
@@ -574,7 +585,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"query_text\": \"${input_map.query_text}\", \"text_docs\":${input_map.text_docs}}",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false,null, null
         );
         assertEquals(responseProcessor.getType(), TYPE);
         SearchRequest request = getSearchRequestWithExtension("query_text", "query.term.text.value");
@@ -660,7 +671,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            true
+            true,null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -759,7 +770,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false,null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -853,7 +864,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false,null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -932,7 +943,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false,null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -1015,7 +1026,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false,null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -1092,7 +1103,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false,null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -1195,7 +1206,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            true
+            true,null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -1279,7 +1290,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            true
+            true,null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -1369,7 +1380,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            true
+            true,null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -1461,7 +1472,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            true
+            true,null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -1525,7 +1536,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            true
+            true,null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -1584,7 +1595,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            true
+            true,null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -1644,7 +1655,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false,null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -1738,7 +1749,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false,null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -1827,7 +1838,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false,null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -1913,7 +1924,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false,null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -2001,7 +2012,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            true
+            true,null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -2065,7 +2076,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            true
+            true,null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -2131,7 +2142,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            true
+            true,null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -2190,7 +2201,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            true
+            true, null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -2255,7 +2266,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            true
+            true, null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -2340,7 +2351,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            true
+            true, null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -2473,7 +2484,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            true
+            true, null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -2576,7 +2587,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            true
+            true, null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -2689,7 +2700,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            true
+            true, null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -2756,7 +2767,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false, null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -2839,7 +2850,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false, null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -3382,7 +3393,8 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false, null, null
+
         );
         SearchRequest request = getSearchRequest();
         SearchResponse response = getSearchResponseTwoFields(5, true, originalDocumentField, originalDocumentField1);
@@ -3471,7 +3483,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false, null, null
         );
         SearchRequest request = getSearchRequest();
         SearchResponse response = getSearchResponse(5, true, originalDocumentField);
@@ -3540,7 +3552,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false, null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -3588,7 +3600,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false, null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -3641,7 +3653,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false, null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -3695,7 +3707,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false, null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -3742,7 +3754,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false, null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -3798,7 +3810,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            true
+            true, null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -3868,7 +3880,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            true
+            true, null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -3938,7 +3950,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            true
+            true, null, null
         );
 
         SearchRequest request = getSearchRequest();
@@ -4169,7 +4181,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false, null, null
         );
         SearchResponse response = getSearchResponse(5, true, documentField);
         Map<String, Object> params = new HashMap<>();
@@ -4257,7 +4269,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false, null, null
         );
         SearchResponse response = getSearchResponse(5, true, documentField);
         Map<String, Object> params = new HashMap<>();
@@ -4362,7 +4374,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            true
+            true, null, null
         );
 
         assertEquals(responseProcessor.getType(), TYPE);
@@ -4462,7 +4474,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false, null, null
         );
 
         assertEquals(responseProcessor.getType(), TYPE);
@@ -4555,7 +4567,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            true
+            true, null, null
         );
 
         assertEquals(responseProcessor.getType(), TYPE);
@@ -4665,7 +4677,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            true
+            true, null, null
         );
 
         assertEquals(responseProcessor.getType(), TYPE);
@@ -4781,7 +4793,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false, null, null
         );
 
         assertEquals(responseProcessor.getType(), TYPE);
@@ -4859,7 +4871,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            true
+            true, null, null
         );
 
         assertEquals(responseProcessor.getType(), TYPE);
@@ -5010,7 +5022,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             "{ \"parameters\": ${ml_inference.parameters} }",
             client,
             TEST_XCONTENT_REGISTRY_FOR_QUERY,
-            false
+            false, null, null
         );
         return responseProcessor;
     }
@@ -5524,6 +5536,126 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
             assertEquals(e.getMessage(), "");
 
         }
+    }
+
+    /**
+     * Tests the creation of the MLInferenceSearchResponseProcessor with conversation search.
+     *
+     * @throws Exception if an error occurs during the test
+     */
+    public void testCreateConversationSearch() throws Exception {
+        Map<String, Object> config = new HashMap<>();
+        config.put(MODEL_ID, "model1");
+        // model takes in text as context and returns llm_answer in the search response extension.
+        //TODO should we add the check in input map that's it's expected to have context field config?
+        // how about multiple context fields? can we check string substitor syntax that can support suffix substitute parttern
+        List<Map<String, String>> inputMap = new ArrayList<>();
+        Map<String, String> input0 = new HashMap<>();
+        input0.put("context", "text");
+        inputMap.add(input0);
+        config.put(INPUT_MAP, inputMap);
+        List<Map<String, String>> outputMap = new ArrayList<>();
+        Map<String, String> output1 = new HashMap<>();
+        output1.put("ext.ml_inference.llm_answer", "response");
+        outputMap.add(output1);
+        config.put(OUTPUT_MAP, outputMap);
+        string = "{\n" +
+                "    \"query\": {\n" +
+                "      \"neural_sparse\": {\n" +
+                "        \"passage_embedding\": {\n" +
+                "          \"query_tokens\": ${vector}\n" +
+                "        }\n" +
+                "      }\n" +
+                "    },\n" +
+                "   \"_source\": {\n" +
+                "      \"excludes\": [\"passage_embedding\"]\n" +
+                "   }\n" +
+                "  }\n" +
+                "  }";
+        Map<String, Object> conversationConfig = new HashMap<>();
+        conversationConfig.put(MEMORY_ID,"memory_1");
+        conversationConfig.put(MEMORY_SIZE,5);
+        conversationConfig.put(LLM_MODEL,"gpt-4.1-default");
+        config.put(CONVERSATIONAL, conversationConfig);
+        String processorTag = randomAlphaOfLength(10);
+        MLInferenceSearchResponseProcessor conversationalSearchResponseProcessor = factory
+                .create(Collections.emptyMap(), processorTag, null, false, config, null);
+        assertNotNull(conversationalSearchResponseProcessor);
+        assertEquals(conversationalSearchResponseProcessor.getTag(), processorTag);
+        assertEquals(conversationalSearchResponseProcessor.getType(), conversationalSearchResponseProcessor.TYPE);
+        assertEquals(conversationalSearchResponseProcessor.isIgnoreFailure(), false);
+
+        Map<String, Object>  expectedModelConfig = new HashMap<>();
+        expectedModelConfig.put("messages","[\n" +
+                "                {\"role\":${parameters.role},\"content\":${parameters.prompt} }]},\n" +
+                "                 ${parameters._read_memory} \n" +
+                "                {\"role\":\"user\",\"content\":\"${ext.ml_inference.llm_question}${parameter.context}\" }]}, \n" +
+                "            ]");
+        expectedModelConfig.put("role", "developer");
+        expectedModelConfig.put("prompt", "you are a helpful assistant.");
+        assertEquals(conversationalSearchResponseProcessor.getInferenceProcessorAttributes().getModelConfigMaps(), expectedModelConfig);
+        assertNotNull(conversationalSearchResponseProcessor.getReadMemoryProcessor());
+        assertEquals(conversationalSearchResponseProcessor.getReadMemoryProcessor().getActionType(),READ_ACTION_TYPE );
+        assertEquals(conversationalSearchResponseProcessor.getReadMemoryProcessor().getMemoryId(),"memory_1" );
+        assertEquals(conversationalSearchResponseProcessor.getReadMemoryProcessor().getRequestBody(),"{\"role\":\"user\",\"content\":\"${input}\"}, {\"role\":\"system\",\"content\":\"${response}\"}," );
+        assertEquals(conversationalSearchResponseProcessor.getReadMemoryProcessor().getMessageSize(),5);
+
+        assertNotNull(conversationalSearchResponseProcessor.getSaveMemoryProcessor());
+        assertEquals(conversationalSearchResponseProcessor.getSaveMemoryProcessor().getActionType(),SAVE_ACTION_TYPE );
+        assertEquals(conversationalSearchResponseProcessor.getReadMemoryProcessor().getMemoryId(),"memory_1" );
+        assertEquals(conversationalSearchResponseProcessor.getReadMemoryProcessor().getRequestBody(),"{\"role\":\"user\",\"content\":\"${input}\"}, {\"role\":\"system\",\"content\":\"${response}\"}," );
+        assertEquals(conversationalSearchResponseProcessor.getReadMemoryProcessor().getMessageSize(),5);
+
+        assertEquals(conversationalSearchResponseProcessor.getReadMemoryProcessor().getActionType(),READ_ACTION_TYPE );
+        String question = "What is OpenSearch?";
+        QueryBuilder incomingQuery = QueryBuilders.matchQuery("text", question);
+        Map<String, Object> params = new HashMap<>();
+        params.put("llm_question", question);
+        MLInferenceRequestParameters requestParameters = new MLInferenceRequestParameters(params);
+
+        MLInferenceRequestParametersExtBuilder extBuilder = new MLInferenceRequestParametersExtBuilder();
+        extBuilder.setRequestParameters(requestParameters);
+        SearchSourceBuilder source = new SearchSourceBuilder().query(incomingQuery).ext(List.of(extBuilder));
+        ;
+        SearchRequest request = new SearchRequest().source(source);
+
+
+        String fieldName = "text";
+
+        SearchResponse response = getSearchResponse(5, true, fieldName);
+
+        ModelTensor modelTensor = ModelTensor
+                .builder()
+                .dataAsMap(ImmutableMap.of("response", Arrays.asList(0.0, 1.0, 2.0, 3.0, 4.0)))
+                .build();
+        ModelTensors modelTensors = ModelTensors.builder().mlModelTensors(Arrays.asList(modelTensor)).build();
+        ModelTensorOutput mlModelTensorOutput = ModelTensorOutput.builder().mlModelOutputs(Arrays.asList(modelTensors)).build();
+
+        doAnswer(invocation -> {
+            ActionListener<MLTaskResponse> actionListener = invocation.getArgument(2);
+            actionListener.onResponse(MLTaskResponse.builder().output(mlModelTensorOutput).build());
+            return null;
+        }).when(client).execute(any(), any(), any());
+
+        ActionListener<SearchResponse> listener = new ActionListener<>() {
+            @Override
+            public void onResponse(SearchResponse newSearchResponse) {
+                assertEquals(newSearchResponse.getHits().getHits().length, 5);
+                assertEquals(newSearchResponse.getHits().getHits()[0].getSourceAsMap().get("text_embedding"), 0.0);
+                assertEquals(newSearchResponse.getHits().getHits()[1].getSourceAsMap().get("text_embedding"), 1.0);
+                assertEquals(newSearchResponse.getHits().getHits()[2].getSourceAsMap().get("text_embedding"), 2.0);
+                assertEquals(newSearchResponse.getHits().getHits()[3].getSourceAsMap().get("text_embedding"), 3.0);
+                assertEquals(newSearchResponse.getHits().getHits()[4].getSourceAsMap().get("text_embedding"), 4.0);
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                throw new RuntimeException(e);
+            }
+        };
+
+//        MLInferenceSearchResponseProcessor.processResponseAsync(request, response, responseContext, listener);
+
     }
 
 }

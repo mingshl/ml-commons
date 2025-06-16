@@ -63,7 +63,7 @@ public class LLMMemoryProcessorConfigUtils {
         switch (modelName.toLowerCase()) {
             case "gpt-4.1-default":
                 modelConfig.put("role", "developer");
-                modelConfig.put("system_prompt", "you are a helpful assistant.");
+                modelConfig.put("prompt", "you are a helpful assistant.");
                 modelConfig.put("messages", "[\n" +
                         "                {\"role\":${parameters.role},\"content\":${parameters.prompt} }]},\n" +
                         "                 ${parameters._read_memory} \n" +
@@ -73,9 +73,13 @@ public class LLMMemoryProcessorConfigUtils {
             // Add more cases for different models
             default:
                 // Default configuration
-                modelConfig.put("role", "assistant");
+                modelConfig.put("role", "developer");
                 modelConfig.put("system_prompt", "you are a helpful assistant.");
-                modelConfig.put("messages", "[]");
+                modelConfig.put("messages", "[\n" +
+                        "                {\"role\":${parameters.role},\"content\":${parameters.prompt} }]},\n" +
+                        "                 ${parameters._read_memory} \n" +
+                        "                {\"role\":\"user\",\"content\":\"${ext.ml_inference.llm_question}${parameter.context}\" }]}, \n" +
+                        "            ]");
         }
 
         return modelConfig;
