@@ -253,6 +253,7 @@ public class Interaction implements Writeable, ToXContentObject {
             + traceNum
             + "}";
     }
+
     public Map<String, Object> toMap() {
         Map<String, Object> map = new HashMap<>();
         map.put(ConversationalIndexConstants.INTERACTIONS_CONVERSATION_ID_FIELD, id);

@@ -5559,19 +5559,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
         output1.put("ext.ml_inference.llm_answer", "response");
         outputMap.add(output1);
         config.put(OUTPUT_MAP, outputMap);
-        string = "{\n" +
-                "    \"query\": {\n" +
-                "      \"neural_sparse\": {\n" +
-                "        \"passage_embedding\": {\n" +
-                "          \"query_tokens\": ${vector}\n" +
-                "        }\n" +
-                "      }\n" +
-                "    },\n" +
-                "   \"_source\": {\n" +
-                "      \"excludes\": [\"passage_embedding\"]\n" +
-                "   }\n" +
-                "  }\n" +
-                "  }";
+
         Map<String, Object> conversationConfig = new HashMap<>();
         conversationConfig.put(MEMORY_ID,"memory_1");
         conversationConfig.put(MEMORY_SIZE,5);
