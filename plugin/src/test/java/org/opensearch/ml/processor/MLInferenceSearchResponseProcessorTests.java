@@ -45,7 +45,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import org.apache.lucene.queryparser.flexible.core.builders.QueryBuilder;
+
 import org.apache.lucene.search.TotalHits;
 import org.junit.Before;
 import org.junit.Test;
@@ -65,7 +65,6 @@ import org.opensearch.core.common.bytes.BytesArray;
 import org.opensearch.core.rest.RestStatus;
 import org.opensearch.core.xcontent.NamedXContentRegistry;
 import org.opensearch.index.query.QueryBuilder;
-import org.opensearch.index.query.QueryBuilders;
 import org.opensearch.index.query.TermQueryBuilder;
 import org.opensearch.index.search.MatchQuery;
 import org.opensearch.ml.common.conversation.Interaction;
@@ -5622,6 +5621,42 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
      */
     @Test
     public void testCreateConversationSearch() throws Exception {
+
+
+        // Create a custom factory that will use our mocked memory client
+        MLInferenceSearchResponseProcessor.Factory customFactory = new MLInferenceSearchResponseProcessor.Factory(client, xContentRegistry) {
+            @Override
+            public MLInferenceSearchResponseProcessor create(
+                    Map<String, Processor.Factory<SearchResponseProcessor>> processorFactories,
+                    String tag,
+                    String description,
+                    boolean ignoreFailure,
+                    Map<String, Object> config,
+                    PipelineContext pipelineContext
+            ) {
+                MLInferenceSearchResponseProcessor processor = super.create(
+                        processorFactories, tag, description, ignoreFailure, config, pipelineContext);
+
+                // Replace the memory clients in the read and save processors with our mock
+                MemorySearchResponseProcessor readProcessor = processor.getReadMemoryProcessor();
+                MemorySearchResponseProcessor saveProcessor = processor.getSaveMemoryProcessor();
+
+                // Use reflection to replace the memory client in both processors
+                try {
+                    Field memoryClientField = MemorySearchResponseProcessor.class.getDeclaredField("memoryClient");
+                    memoryClientField.setAccessible(true);
+                    memoryClientField.set(readProcessor, mockMemoryClient);
+                    memoryClientField.set(saveProcessor, mockMemoryClient);
+                } catch (Exception e) {
+                    throw new RuntimeException("Failed to inject mock memory client", e);
+                }
+
+                return processor;
+            }
+        };
+
+
+
         Map<String, Object> config = new HashMap<>();
         config.put(MODEL_ID, "model1");
 
@@ -5649,8 +5684,8 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
         String processorTag = randomAlphaOfLength(10);
 
         // Create the processor
-        MLInferenceSearchResponseProcessor conversationalSearchResponseProcessor = factory
-                .create(Collections.emptyMap(), processorTag, null, false, config, null);
+        MLInferenceSearchResponseProcessor conversationalSearchResponseProcessor = customFactory
+                .create(Collections.emptyMap(), processorTag, client, false, config, null);
 
         // Verify basic processor properties
         assertNotNull(conversationalSearchResponseProcessor);
@@ -5692,7 +5727,7 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
         QueryBuilder incomingQuery = new TermQueryBuilder("text", "foo");
 
         Map<String, Object> params = new HashMap<>();
-        params.put("ext.ml_inference.llm_question", "what is OpenSearch?" );
+        params.put("ext.ml_inference.llm_question", "How many alphabets in OpenSearch" );
         MLInferenceRequestParameters requestParameters = new MLInferenceRequestParameters(params);
 
         MLInferenceRequestParametersExtBuilder extBuilder = new MLInferenceRequestParametersExtBuilder();
@@ -5700,13 +5735,34 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
         SearchSourceBuilder source = new SearchSourceBuilder().query(incomingQuery).ext(List.of(extBuilder));
 
         SearchRequest request = new SearchRequest().source(source);
+        SearchResponse response = getSearchResponse(5, true, "text");
 
+        ModelTensor modelTensor = ModelTensor
+                .builder()
+                .dataAsMap(ImmutableMap.of("response", "ten"))
+                .build();
+        ModelTensors modelTensors = ModelTensors.builder().mlModelTensors(Arrays.asList(modelTensor)).build();
+        ModelTensorOutput mlModelTensorOutput = ModelTensorOutput.builder().mlModelOutputs(Arrays.asList(modelTensors)).build();
+
+        doAnswer(invocation -> {
+            ActionListener<MLTaskResponse> actionListener = invocation.getArgument(2);
+            actionListener.onResponse(MLTaskResponse.builder().output(mlModelTensorOutput).build());
+            return null;
+        }).when(client).execute(any(), any(), any());
+
+
+        ActionListener<SearchResponse> listener = new ActionListener<>() {
+            @Override
+            public void onResponse(SearchResponse newSearchResponse) {
+                assertNotNull(newSearchResponse);
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                throw new RuntimeException(e);
+            }
+        };
         conversationalSearchResponseProcessor.processResponseAsync(request, response, responseContext, listener);
-
-        // the problem is that the memory client is created when MemorySearchResponseProcessor is created,
-        // so how can I mock the behavior of memory client?
-
-        // Similar to the unit test testReadMemorySuccess at MemorySearchResponseProcessorTests,
         // I need to mock memoryClient when getInteractions, it will retrun sample Interaction I need to verify the memory is
 
 
