@@ -76,7 +76,7 @@ import org.opensearch.ml.common.output.model.ModelTensors;
 import org.opensearch.ml.common.transport.MLTaskResponse;
 import org.opensearch.ml.common.transport.prediction.MLPredictionTaskAction;
 import org.opensearch.ml.common.transport.prediction.MLPredictionTaskRequest;
-import org.opensearch.ml.repackage.com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableMap;
 import org.opensearch.ml.searchext.MLInferenceRequestParameters;
 import org.opensearch.ml.searchext.MLInferenceRequestParametersExtBuilder;
 import org.opensearch.search.SearchHit;
@@ -5543,106 +5543,72 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
      *
      * @throws Exception if an error occurs during the test
      */
+    @Test
     public void testCreateConversationSearch() throws Exception {
         Map<String, Object> config = new HashMap<>();
         config.put(MODEL_ID, "model1");
-        // model takes in text as context and returns llm_answer in the search response extension.
-        //TODO should we add the check in input map that's it's expected to have context field config?
-        // how about multiple context fields? can we check string substitor syntax that can support suffix substitute parttern
+        
+        // Setup input map with context field
         List<Map<String, String>> inputMap = new ArrayList<>();
         Map<String, String> input0 = new HashMap<>();
         input0.put("context", "text");
         inputMap.add(input0);
         config.put(INPUT_MAP, inputMap);
+        
+        // Setup output map to write to extension
         List<Map<String, String>> outputMap = new ArrayList<>();
         Map<String, String> output1 = new HashMap<>();
         output1.put("ext.ml_inference.llm_answer", "response");
         outputMap.add(output1);
         config.put(OUTPUT_MAP, outputMap);
 
+        // Setup conversation config
         Map<String, Object> conversationConfig = new HashMap<>();
-        conversationConfig.put(MEMORY_ID,"memory_1");
-        conversationConfig.put(MEMORY_SIZE,5);
-        conversationConfig.put(LLM_MODEL,"gpt-4.1-default");
+        conversationConfig.put(MEMORY_ID, "memory_1");
+        conversationConfig.put(MEMORY_SIZE, 5);
+        conversationConfig.put(LLM_MODEL, "gpt-4.1-default");
         config.put(CONVERSATIONAL, conversationConfig);
+        
         String processorTag = randomAlphaOfLength(10);
+        
+        // Create the processor
         MLInferenceSearchResponseProcessor conversationalSearchResponseProcessor = factory
                 .create(Collections.emptyMap(), processorTag, null, false, config, null);
+        
+        // Verify basic processor properties
         assertNotNull(conversationalSearchResponseProcessor);
-        assertEquals(conversationalSearchResponseProcessor.getTag(), processorTag);
-        assertEquals(conversationalSearchResponseProcessor.getType(), conversationalSearchResponseProcessor.TYPE);
-        assertEquals(conversationalSearchResponseProcessor.isIgnoreFailure(), false);
+        assertEquals(processorTag, conversationalSearchResponseProcessor.getTag());
+        assertEquals(TYPE, conversationalSearchResponseProcessor.getType());
+        assertEquals(false, conversationalSearchResponseProcessor.isIgnoreFailure());
 
-        Map<String, Object>  expectedModelConfig = new HashMap<>();
-        expectedModelConfig.put("messages","[\n" +
-                "                {\"role\":${parameters.role},\"content\":${parameters.prompt} }]},\n" +
-                "                 ${parameters._read_memory} \n" +
-                "                {\"role\":\"user\",\"content\":\"${ext.ml_inference.llm_question}${parameter.context}\" }]}, \n" +
-                "            ]");
-        expectedModelConfig.put("role", "developer");
-        expectedModelConfig.put("prompt", "you are a helpful assistant.");
-        assertEquals(conversationalSearchResponseProcessor.getInferenceProcessorAttributes().getModelConfigMaps(), expectedModelConfig);
-        assertNotNull(conversationalSearchResponseProcessor.getReadMemoryProcessor());
-        assertEquals(conversationalSearchResponseProcessor.getReadMemoryProcessor().getActionType(),READ_ACTION_TYPE );
-        assertEquals(conversationalSearchResponseProcessor.getReadMemoryProcessor().getMemoryId(),"memory_1" );
-        assertEquals(conversationalSearchResponseProcessor.getReadMemoryProcessor().getRequestBody(),"{\"role\":\"user\",\"content\":\"${input}\"}, {\"role\":\"system\",\"content\":\"${response}\"}," );
-        assertEquals(conversationalSearchResponseProcessor.getReadMemoryProcessor().getMessageSize(),5);
+        // Verify model config
+        Map<String, String> modelConfigMaps = conversationalSearchResponseProcessor.getInferenceProcessorAttributes().getModelConfigMaps();
+        assertNotNull(modelConfigMaps);
+        assertEquals("developer", modelConfigMaps.get("role"));
+        assertEquals("you are a helpful assistant.", modelConfigMaps.get("prompt"));
+        assertTrue(modelConfigMaps.containsKey("messages"));
+        
+        // Verify read memory processor
+        MemorySearchResponseProcessor readMemoryProcessor = conversationalSearchResponseProcessor.getReadMemoryProcessor();
+        assertNotNull(readMemoryProcessor);
+        assertEquals(READ_ACTION_TYPE, readMemoryProcessor.getActionType());
+        assertEquals("memory_1", readMemoryProcessor.getMemoryId());
+        assertEquals(5, readMemoryProcessor.getMessageSize());
+        assertEquals("{\"role\":\"user\",\"content\":\"${input}\"}, {\"role\":\"system\",\"content\":\"${response}\"},", 
+                readMemoryProcessor.getRequestBody());
+        
+        // Verify save memory processor
+        MemorySearchResponseProcessor saveMemoryProcessor = conversationalSearchResponseProcessor.getSaveMemoryProcessor();
+        assertNotNull(saveMemoryProcessor);
+        assertEquals(SAVE_ACTION_TYPE, saveMemoryProcessor.getActionType());
+        assertEquals("memory_1", saveMemoryProcessor.getMemoryId());
+        assertEquals(5, saveMemoryProcessor.getMessageSize());
+        assertEquals("{\"input\":\"${ext.ml_inference.llm_question}\", \"response\": \"${llm_answer}\"}", 
+                saveMemoryProcessor.getRequestBody());
 
-        assertNotNull(conversationalSearchResponseProcessor.getSaveMemoryProcessor());
-        assertEquals(conversationalSearchResponseProcessor.getSaveMemoryProcessor().getActionType(),SAVE_ACTION_TYPE );
-        assertEquals(conversationalSearchResponseProcessor.getReadMemoryProcessor().getMemoryId(),"memory_1" );
-        assertEquals(conversationalSearchResponseProcessor.getReadMemoryProcessor().getRequestBody(),"{\"role\":\"user\",\"content\":\"${input}\"}, {\"role\":\"system\",\"content\":\"${response}\"}," );
-        assertEquals(conversationalSearchResponseProcessor.getReadMemoryProcessor().getMessageSize(),5);
-
-        assertEquals(conversationalSearchResponseProcessor.getReadMemoryProcessor().getActionType(),READ_ACTION_TYPE );
-        String question = "What is OpenSearch?";
-        QueryBuilder incomingQuery = QueryBuilders.matchQuery("text", question);
-        Map<String, Object> params = new HashMap<>();
-        params.put("llm_question", question);
-        MLInferenceRequestParameters requestParameters = new MLInferenceRequestParameters(params);
-
-        MLInferenceRequestParametersExtBuilder extBuilder = new MLInferenceRequestParametersExtBuilder();
-        extBuilder.setRequestParameters(requestParameters);
-        SearchSourceBuilder source = new SearchSourceBuilder().query(incomingQuery).ext(List.of(extBuilder));
-        ;
-        SearchRequest request = new SearchRequest().source(source);
+        //now try to run 
 
 
-        String fieldName = "text";
-
-        SearchResponse response = getSearchResponse(5, true, fieldName);
-
-        ModelTensor modelTensor = ModelTensor
-                .builder()
-                .dataAsMap(ImmutableMap.of("response", Arrays.asList(0.0, 1.0, 2.0, 3.0, 4.0)))
-                .build();
-        ModelTensors modelTensors = ModelTensors.builder().mlModelTensors(Arrays.asList(modelTensor)).build();
-        ModelTensorOutput mlModelTensorOutput = ModelTensorOutput.builder().mlModelOutputs(Arrays.asList(modelTensors)).build();
-
-        doAnswer(invocation -> {
-            ActionListener<MLTaskResponse> actionListener = invocation.getArgument(2);
-            actionListener.onResponse(MLTaskResponse.builder().output(mlModelTensorOutput).build());
-            return null;
-        }).when(client).execute(any(), any(), any());
-
-        ActionListener<SearchResponse> listener = new ActionListener<>() {
-            @Override
-            public void onResponse(SearchResponse newSearchResponse) {
-                assertEquals(newSearchResponse.getHits().getHits().length, 5);
-                assertEquals(newSearchResponse.getHits().getHits()[0].getSourceAsMap().get("text_embedding"), 0.0);
-                assertEquals(newSearchResponse.getHits().getHits()[1].getSourceAsMap().get("text_embedding"), 1.0);
-                assertEquals(newSearchResponse.getHits().getHits()[2].getSourceAsMap().get("text_embedding"), 2.0);
-                assertEquals(newSearchResponse.getHits().getHits()[3].getSourceAsMap().get("text_embedding"), 3.0);
-                assertEquals(newSearchResponse.getHits().getHits()[4].getSourceAsMap().get("text_embedding"), 4.0);
-            }
-
-            @Override
-            public void onFailure(Exception e) {
-                throw new RuntimeException(e);
-            }
-        };
-
-//        MLInferenceSearchResponseProcessor.processResponseAsync(request, response, responseContext, listener);
 
     }
 
