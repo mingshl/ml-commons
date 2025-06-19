@@ -36,6 +36,7 @@ import static org.opensearch.ml.processor.MLInferenceSearchResponseProcessor.LLM
 import static org.opensearch.ml.processor.MemorySearchResponseProcessor.READ_ACTION_TYPE;
 import static org.opensearch.ml.processor.MemorySearchResponseProcessor.SAVE_ACTION_TYPE;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -44,6 +45,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.apache.lucene.queryparser.flexible.core.builders.QueryBuilder;
 import org.apache.lucene.search.TotalHits;
 import org.junit.Before;
 import org.junit.Test;
@@ -66,6 +68,7 @@ import org.opensearch.index.query.QueryBuilder;
 import org.opensearch.index.query.QueryBuilders;
 import org.opensearch.index.query.TermQueryBuilder;
 import org.opensearch.index.search.MatchQuery;
+import org.opensearch.ml.common.conversation.Interaction;
 import org.opensearch.ml.common.dataset.TextSimilarityInputDataSet;
 import org.opensearch.ml.common.dataset.remote.RemoteInferenceInputDataSet;
 import org.opensearch.ml.common.exception.MLResourceNotFoundException;
@@ -5538,7 +5541,81 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
         }
     }
 
-    /**
+//    /**
+//     * Tests the creation of the MLInferenceSearchResponseProcessor with conversation search.
+//     *
+//     * @throws Exception if an error occurs during the test
+//     */
+//    @Test
+//    public void testCreateConversationSearch() throws Exception {
+//        Map<String, Object> config = new HashMap<>();
+//        config.put(MODEL_ID, "model1");
+//
+//        // Setup input map with context field
+//        List<Map<String, String>> inputMap = new ArrayList<>();
+//        Map<String, String> input0 = new HashMap<>();
+//        input0.put("context", "text");
+//        inputMap.add(input0);
+//        config.put(INPUT_MAP, inputMap);
+//
+//        // Setup output map to write to extension
+//        List<Map<String, String>> outputMap = new ArrayList<>();
+//        Map<String, String> output1 = new HashMap<>();
+//        output1.put("ext.ml_inference.llm_answer", "response");
+//        outputMap.add(output1);
+//        config.put(OUTPUT_MAP, outputMap);
+//
+//        // Setup conversation config
+//        Map<String, Object> conversationConfig = new HashMap<>();
+//        conversationConfig.put(MEMORY_ID, "memory_1");
+//        conversationConfig.put(MEMORY_SIZE, 5);
+//        conversationConfig.put(LLM_MODEL, "gpt-4.1-default");
+//        config.put(CONVERSATIONAL, conversationConfig);
+//
+//        String processorTag = randomAlphaOfLength(10);
+//
+//        // Create the processor
+//        MLInferenceSearchResponseProcessor conversationalSearchResponseProcessor = factory
+//                .create(Collections.emptyMap(), processorTag, null, false, config, null);
+//
+//        // Verify basic processor properties
+//        assertNotNull(conversationalSearchResponseProcessor);
+//        assertEquals(processorTag, conversationalSearchResponseProcessor.getTag());
+//        assertEquals(TYPE, conversationalSearchResponseProcessor.getType());
+//        assertEquals(false, conversationalSearchResponseProcessor.isIgnoreFailure());
+//
+//        // Verify model config
+//        Map<String, String> modelConfigMaps = conversationalSearchResponseProcessor.getInferenceProcessorAttributes().getModelConfigMaps();
+//        assertNotNull(modelConfigMaps);
+//        assertEquals("developer", modelConfigMaps.get("role"));
+//        assertEquals("you are a helpful assistant.", modelConfigMaps.get("prompt"));
+//        assertTrue(modelConfigMaps.containsKey("messages"));
+//
+//        // Verify read memory processor
+//        MemorySearchResponseProcessor readMemoryProcessor = conversationalSearchResponseProcessor.getReadMemoryProcessor();
+//        assertNotNull(readMemoryProcessor);
+//        assertEquals(READ_ACTION_TYPE, readMemoryProcessor.getActionType());
+//        assertEquals("memory_1", readMemoryProcessor.getMemoryId());
+//        assertEquals(5, readMemoryProcessor.getMessageSize());
+//        assertEquals("{\"role\":\"user\",\"content\":\"${input}\"}, {\"role\":\"system\",\"content\":\"${response}\"},",
+//                readMemoryProcessor.getRequestBody());
+//
+//        // Verify save memory processor
+//        MemorySearchResponseProcessor saveMemoryProcessor = conversationalSearchResponseProcessor.getSaveMemoryProcessor();
+//        assertNotNull(saveMemoryProcessor);
+//        assertEquals(SAVE_ACTION_TYPE, saveMemoryProcessor.getActionType());
+//        assertEquals("memory_1", saveMemoryProcessor.getMemoryId());
+//        assertEquals(5, saveMemoryProcessor.getMessageSize());
+//        assertEquals("{\"input\":\"${ext.ml_inference.llm_question}\", \"response\": \"${llm_answer}\"}",
+//                saveMemoryProcessor.getRequestBody());
+//
+//        //now try to run
+//
+//
+//
+//    }
+
+        /**
      * Tests the creation of the MLInferenceSearchResponseProcessor with conversation search.
      *
      * @throws Exception if an error occurs during the test
@@ -5547,14 +5624,14 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
     public void testCreateConversationSearch() throws Exception {
         Map<String, Object> config = new HashMap<>();
         config.put(MODEL_ID, "model1");
-        
+
         // Setup input map with context field
         List<Map<String, String>> inputMap = new ArrayList<>();
         Map<String, String> input0 = new HashMap<>();
         input0.put("context", "text");
         inputMap.add(input0);
         config.put(INPUT_MAP, inputMap);
-        
+
         // Setup output map to write to extension
         List<Map<String, String>> outputMap = new ArrayList<>();
         Map<String, String> output1 = new HashMap<>();
@@ -5568,13 +5645,13 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
         conversationConfig.put(MEMORY_SIZE, 5);
         conversationConfig.put(LLM_MODEL, "gpt-4.1-default");
         config.put(CONVERSATIONAL, conversationConfig);
-        
+
         String processorTag = randomAlphaOfLength(10);
-        
+
         // Create the processor
         MLInferenceSearchResponseProcessor conversationalSearchResponseProcessor = factory
                 .create(Collections.emptyMap(), processorTag, null, false, config, null);
-        
+
         // Verify basic processor properties
         assertNotNull(conversationalSearchResponseProcessor);
         assertEquals(processorTag, conversationalSearchResponseProcessor.getTag());
@@ -5587,29 +5664,101 @@ public class MLInferenceSearchResponseProcessorTests extends AbstractBuilderTest
         assertEquals("developer", modelConfigMaps.get("role"));
         assertEquals("you are a helpful assistant.", modelConfigMaps.get("prompt"));
         assertTrue(modelConfigMaps.containsKey("messages"));
-        
+
         // Verify read memory processor
         MemorySearchResponseProcessor readMemoryProcessor = conversationalSearchResponseProcessor.getReadMemoryProcessor();
         assertNotNull(readMemoryProcessor);
         assertEquals(READ_ACTION_TYPE, readMemoryProcessor.getActionType());
         assertEquals("memory_1", readMemoryProcessor.getMemoryId());
         assertEquals(5, readMemoryProcessor.getMessageSize());
-        assertEquals("{\"role\":\"user\",\"content\":\"${input}\"}, {\"role\":\"system\",\"content\":\"${response}\"},", 
+        assertEquals("{\"role\":\"user\",\"content\":\"${input}\"}, {\"role\":\"system\",\"content\":\"${response}\"},",
                 readMemoryProcessor.getRequestBody());
-        
+
         // Verify save memory processor
         MemorySearchResponseProcessor saveMemoryProcessor = conversationalSearchResponseProcessor.getSaveMemoryProcessor();
         assertNotNull(saveMemoryProcessor);
         assertEquals(SAVE_ACTION_TYPE, saveMemoryProcessor.getActionType());
         assertEquals("memory_1", saveMemoryProcessor.getMemoryId());
         assertEquals(5, saveMemoryProcessor.getMessageSize());
-        assertEquals("{\"input\":\"${ext.ml_inference.llm_question}\", \"response\": \"${llm_answer}\"}", 
+        assertEquals("{\"input\":\"${ext.ml_inference.llm_question}\", \"response\": \"${llm_answer}\"}",
                 saveMemoryProcessor.getRequestBody());
 
-        //now try to run 
+        //now try to run responseProcessor.processResponseAsync
+        List<Interaction> sampleInteractions = createSampleInteractions();
+        responseContext.setAttribute("_interactions", sampleInteractions);
 
+        ArgumentCaptor<MLPredictionTaskRequest> argCaptor = ArgumentCaptor.forClass(MLPredictionTaskRequest.class);
+
+        QueryBuilder incomingQuery = new TermQueryBuilder("text", "foo");
+
+        Map<String, Object> params = new HashMap<>();
+        params.put("ext.ml_inference.llm_question", "what is OpenSearch?" );
+        MLInferenceRequestParameters requestParameters = new MLInferenceRequestParameters(params);
+
+        MLInferenceRequestParametersExtBuilder extBuilder = new MLInferenceRequestParametersExtBuilder();
+        extBuilder.setRequestParameters(requestParameters);
+        SearchSourceBuilder source = new SearchSourceBuilder().query(incomingQuery).ext(List.of(extBuilder));
+
+        SearchRequest request = new SearchRequest().source(source);
+
+        conversationalSearchResponseProcessor.processResponseAsync(request, response, responseContext, listener);
+
+        // the problem is that the memory client is created when MemorySearchResponseProcessor is created,
+        // so how can I mock the behavior of memory client?
+
+        // Similar to the unit test testReadMemorySuccess at MemorySearchResponseProcessorTests,
+        // I need to mock memoryClient when getInteractions, it will retrun sample Interaction I need to verify the memory is
+
+
+        // match model input
+        verify(client, times(1)).execute(eq(MLPredictionTaskAction.INSTANCE), argCaptor.capture(), any());
+        MLPredictionTaskRequest req = argCaptor.getValue();
+        MLInput mlInput = req.getMlInput();
+        RemoteInferenceInputDataSet inputDataSet = (RemoteInferenceInputDataSet) mlInput.getInputDataset();
+        assertEquals(
+                toJson(inputDataSet.getParameters()),
+                "{\"text_docs\":\"[\\\"value 0\\\",\\\"value 1\\\",\\\"value 2\\\",\\\"value 3\\\",\\\"value 4\\\"]\"}"
+        );
 
 
     }
+    public List<Interaction> createSampleInteractions() {
+        List<Interaction> interactions = new ArrayList<>();
+        Instant time1 = Instant.now();
+        Instant time2 = time1.plusSeconds(60); // Second interaction 1 minute later
+        // Create sample interaction 1
+        Interaction interaction1 = Interaction
+                .builder()
+                .id("test_memory_id")
+                .createTime(time1)
+                .conversationId("interaction_id_1")
+                .input("What is OpenSearch")
+                .promptTemplate("test_prompt_template")
+                .response("OpenSearch is an open source search and analytics suite.")
+                .origin("memory_processor")
+                .additionalInfo(Collections.singletonMap("context", "test context"))
+                .parentInteractionId("parent_id1")
+                .traceNum(1)
+                .build();
 
+        // Create sample interaction 2
+        Interaction interaction2 =  Interaction
+                .builder()
+                .id("test_memory_id")
+                .createTime(time2)
+                .conversationId("interaction_id_2")
+                .input("How to use OpenSearch?")
+                .promptTemplate("test_prompt_template")
+                .response("You can use OpenSearch by...")
+                .origin("memory_processor")
+                .additionalInfo(Collections.singletonMap("suggestion", "new suggestion"))
+                .parentInteractionId("interaction_id_1")
+                .traceNum(1)
+                .build();
+
+
+        interactions.add(interaction1);
+        interactions.add(interaction2);
+        return interactions;
+    }
 }

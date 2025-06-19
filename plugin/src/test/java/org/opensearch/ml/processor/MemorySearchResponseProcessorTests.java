@@ -225,7 +225,7 @@ public class MemorySearchResponseProcessorTests {
     }
 
 
-    private List<Interaction> createSampleInteractions() {
+    public List<Interaction> createSampleInteractions() {
         List<Interaction> interactions = new ArrayList<>();
         Instant time1 = Instant.now();
         Instant time2 = time1.plusSeconds(60); // Second interaction 1 minute later
