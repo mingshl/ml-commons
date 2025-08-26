@@ -243,6 +243,14 @@ public class MLChatAgentRunner implements MLAgentRunner {
                         // required for MLChatAgentRunnerTest.java, it requires chatHistory to be added to input params to validate
                         inputParams.put(CHAT_HISTORY, String.join(", ", chatHistory) + ", ");
                     }
+                    // Load scratchpad from the last interaction
+                    for (int i = r.size() - 1; i >= 0; i--) {
+                        Interaction interaction = r.get(i);
+                        if (interaction.getAdditionalInfo() != null && interaction.getAdditionalInfo().containsKey(SCRATCHPAD)) {
+                            params.put(SCRATCHPAD, (String) interaction.getAdditionalInfo().get(SCRATCHPAD));
+                            break;
+                        }
+                    }
                 }
 
                 runAgent(mlAgent, params, listener, memory, memory.getConversationId(), functionCalling);
@@ -320,7 +328,7 @@ public class MLChatAgentRunner implements MLAgentRunner {
         lastLlmListener.set(firstListener);
         StepListener<?> lastStepListener = firstListener;
 
-        StringBuilder scratchpadBuilder = new StringBuilder();
+        StringBuilder scratchpadBuilder = new StringBuilder(parameters.getOrDefault(SCRATCHPAD, ""));
         List<String> interactions = new CopyOnWriteArrayList<>();
 
         StringSubstitutor tmpSubstitutor = new StringSubstitutor(Map.of(SCRATCHPAD, scratchpadBuilder.toString()), "${parameters.", "}");
@@ -368,7 +376,8 @@ public class MLChatAgentRunner implements MLAgentRunner {
                             conversationIndexMemory,
                             traceNumber,
                             additionalInfo,
-                            finalAnswer
+                            finalAnswer,
+                            tmpParameters
                         );
                         cleanUpResource(tools);
                         return;
@@ -414,12 +423,33 @@ public class MLChatAgentRunner implements MLAgentRunner {
                             additionalInfo,
                             lastThought,
                             maxIterations,
-                            tools
+                            tools,
+                            tmpParameters
                         );
                         return;
                     }
 
-                    if (tools.containsKey(action)) {
+                    if ("WriteToScratchPadTool".equals(action)) {
+                        String notes = (String) gson.fromJson(actionInput, Map.class).get("notes");
+                        scratchpadBuilder.append(notes).append("\n");
+                        String response = "Wrote to scratchpad: " + notes;
+                        if (functionCalling != null) {
+                            List<Map<String, Object>> toolResults = List
+                                .of(Map.of(TOOL_CALL_ID, toolCallId, TOOL_RESULT, Map.of("text", response)));
+                            List<LLMMessage> llmMessages = functionCalling.supply(toolResults);
+                            interactions.add(llmMessages.getFirst().getResponse());
+                        }
+                        ((ActionListener<Object>) nextStepListener).onResponse("SKIP_SCRATCHPAD");
+                    } else if ("ReadFromScratchPadTool".equals(action)) {
+                        String currentScratchpad = scratchpadBuilder.toString();
+                        if (functionCalling != null) {
+                            List<Map<String, Object>> toolResults = List
+                                .of(Map.of(TOOL_CALL_ID, toolCallId, TOOL_RESULT, Map.of("text", currentScratchpad)));
+                            List<LLMMessage> llmMessages = functionCalling.supply(toolResults);
+                            interactions.add(llmMessages.getFirst().getResponse());
+                        }
+                        ((ActionListener<Object>) nextStepListener).onResponse("SKIP_SCRATCHPAD");
+                    } else if (tools.containsKey(action)) {
                         Map<String, String> toolParams = constructToolParams(
                             tools,
                             toolSpecMap,
@@ -457,14 +487,16 @@ public class MLChatAgentRunner implements MLAgentRunner {
                     Object filteredOutput = filterToolOutput(lastToolParams, output);
                     addToolOutputToAddtionalInfo(toolSpecMap, lastAction, additionalInfo, filteredOutput);
 
-                    String toolResponse = constructToolResponse(
-                        tmpParameters,
-                        lastAction,
-                        lastActionInput,
-                        lastToolSelectionResponse,
-                        filteredOutput
-                    );
-                    scratchpadBuilder.append(toolResponse).append("\n\n");
+                    if (!"SKIP_SCRATCHPAD".equals(output)) {
+                        String toolResponse = constructToolResponse(
+                            tmpParameters,
+                            lastAction,
+                            lastActionInput,
+                            lastToolSelectionResponse,
+                            filteredOutput
+                        );
+                        scratchpadBuilder.append(toolResponse).append("\n\n");
+                    }
 
                     saveTraceData(
                         conversationIndexMemory,
@@ -513,7 +545,8 @@ public class MLChatAgentRunner implements MLAgentRunner {
                             additionalInfo,
                             lastThought,
                             maxIterations,
-                            tools
+                            tools,
+                            tmpParameters
                         );
                         return;
                     }
@@ -718,10 +751,14 @@ public class MLChatAgentRunner implements MLAgentRunner {
         ConversationIndexMemory conversationIndexMemory,
         AtomicInteger traceNumber,
         Map<String, Object> additionalInfo,
-        String finalAnswer
+        String finalAnswer,
+        Map<String, String> parameters
     ) {
         if (conversationIndexMemory != null) {
             String copyOfFinalAnswer = finalAnswer;
+            if (parameters.containsKey(SCRATCHPAD)) {
+                additionalInfo.put(SCRATCHPAD, parameters.get(SCRATCHPAD));
+            }
             ActionListener saveTraceListener = ActionListener.wrap(r -> {
                 conversationIndexMemory
                     .getMemoryManager()
@@ -885,7 +922,8 @@ public class MLChatAgentRunner implements MLAgentRunner {
         Map<String, Object> additionalInfo,
         AtomicReference<String> lastThought,
         int maxIterations,
-        Map<String, Tool> tools
+        Map<String, Tool> tools,
+        Map<String, String> parameters
     ) {
         String incompleteResponse = (lastThought.get() != null && !lastThought.get().isEmpty() && !"null".equals(lastThought.get()))
             ? String.format("%s. Last thought: %s", String.format(MAX_ITERATIONS_MESSAGE, maxIterations), lastThought.get())
@@ -901,7 +939,8 @@ public class MLChatAgentRunner implements MLAgentRunner {
             conversationIndexMemory,
             traceNumber,
             additionalInfo,
-            incompleteResponse
+            incompleteResponse,
+            parameters
         );
         cleanUpResource(tools);
     }
