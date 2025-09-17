@@ -19,7 +19,9 @@ import org.opensearch.ml.common.utils.StringUtils;
 public class ReadFromScratchPadTool implements Tool {
     public static final String TYPE = "ReadFromScratchPadTool";
     public static final String STRICT_FIELD = "strict";
+    public static final String NOTES_KEY = "notes";
     public static final String SCRATCHPAD_NOTES_KEY = "_scratchpad_notes";
+    public static final String PERSISTENT_NOTES_KEY = "persistent_notes";
     private static final String DEFAULT_DESCRIPTION =
         "Retrieve previous research work and notes from the persistent scratchpad for the current conversation.";
 
@@ -83,13 +85,16 @@ public class ReadFromScratchPadTool implements Tool {
 
     @Override
     public <T> void run(Map<String, String> parameters, ActionListener<T> listener) {
-        // This tool's core logic for state management will be handled by the agent runner,
-        // which manages the scratchpad for the entire conversation. This class defines the tool's interface.
-
         // The agent runner will intercept this call and substitute this placeholder
         // with the actual content from the persistent scratchpad.
         String existing_notes = StringUtils.toJson(parameters.getOrDefault(SCRATCHPAD_NOTES_KEY, ""));
-
+        String persistent_notes = parameters.getOrDefault(PERSISTENT_NOTES_KEY, "");
+        if (persistent_notes != null && !persistent_notes.isEmpty()) {
+            if (!existing_notes.contains(persistent_notes)) {
+                existing_notes += "\n" + persistent_notes;
+            }
+        }
+        parameters.put(SCRATCHPAD_NOTES_KEY, existing_notes);
         listener.onResponse((T) ("Notes from scratchpad: " + existing_notes));
     }
 
