@@ -23,6 +23,14 @@ import org.opensearch.ml.common.transport.execute.MLExecuteStreamTaskAction;
 import org.opensearch.ml.common.transport.execute.MLExecuteTaskAction;
 import org.opensearch.ml.common.transport.execute.MLExecuteTaskRequest;
 import org.opensearch.ml.common.transport.execute.MLExecuteTaskResponse;
+import org.opensearch.ml.action.contextmanagement.ContextManagementTemplateService;
+import org.opensearch.ml.action.contextmanagement.ContextManagerFactory;
+import org.opensearch.ml.common.contextmanager.ContextManager;
+import org.opensearch.ml.common.contextmanager.ContextManagementTemplate;
+import org.opensearch.ml.common.contextmanager.ContextManagerConfig;
+import org.opensearch.ml.common.contextmanager.ContextManagerHookProvider;
+import org.opensearch.ml.common.hooks.HookRegistry;
+import org.opensearch.ml.common.input.execute.agent.AgentMLInput;
 import org.opensearch.ml.engine.MLEngine;
 import org.opensearch.ml.engine.indices.MLInputDatasetHandler;
 import org.opensearch.ml.stats.ActionName;
@@ -34,6 +42,7 @@ import org.opensearch.transport.StreamTransportResponseHandler;
 import org.opensearch.transport.TransportChannel;
 import org.opensearch.transport.TransportException;
 import org.opensearch.transport.TransportResponseHandler;
+
 import org.opensearch.transport.client.Client;
 import org.opensearch.transport.stream.StreamTransportResponse;
 
@@ -50,6 +59,8 @@ public class MLExecuteTaskRunner extends MLTaskRunner<MLExecuteTaskRequest, MLEx
     private final MLInputDatasetHandler mlInputDatasetHandler;
     protected final DiscoveryNodeHelper nodeHelper;
     private final MLEngine mlEngine;
+    private final ContextManagementTemplateService contextManagementTemplateService;
+    private final ContextManagerFactory contextManagerFactory;
     private volatile Boolean isPythonModelEnabled;
 
     public MLExecuteTaskRunner(
@@ -62,7 +73,9 @@ public class MLExecuteTaskRunner extends MLTaskRunner<MLExecuteTaskRequest, MLEx
         MLTaskDispatcher mlTaskDispatcher,
         MLCircuitBreakerService mlCircuitBreakerService,
         DiscoveryNodeHelper nodeHelper,
-        MLEngine mlEngine
+        MLEngine mlEngine,
+        ContextManagementTemplateService contextManagementTemplateService,
+        ContextManagerFactory contextManagerFactory
     ) {
         super(mlTaskManager, mlStats, nodeHelper, mlTaskDispatcher, mlCircuitBreakerService, clusterService);
         this.threadPool = threadPool;
@@ -71,6 +84,8 @@ public class MLExecuteTaskRunner extends MLTaskRunner<MLExecuteTaskRequest, MLEx
         this.mlInputDatasetHandler = mlInputDatasetHandler;
         this.nodeHelper = nodeHelper;
         this.mlEngine = mlEngine;
+        this.contextManagementTemplateService = contextManagementTemplateService;
+        this.contextManagerFactory = contextManagerFactory;
         isPythonModelEnabled = ML_COMMONS_ENABLE_INHOUSE_PYTHON_MODEL.get(this.clusterService.getSettings());
         this.clusterService
             .getClusterSettings()
@@ -153,9 +168,21 @@ public class MLExecuteTaskRunner extends MLTaskRunner<MLExecuteTaskRequest, MLEx
                     .createCounterStatIfAbsent(request.getFunctionName(), ActionName.EXECUTE, MLActionLevelStat.ML_ACTION_REQUEST_COUNT)
                     .increment();
 
-                // ActionListener<MLExecuteTaskResponse> wrappedListener = ActionListener.runBefore(listener, )
                 Input input = request.getInput();
                 FunctionName functionName = request.getFunctionName();
+                
+                // Handle agent execution with context management
+                if (FunctionName.AGENT.equals(functionName) && input instanceof AgentMLInput) {
+                    AgentMLInput agentInput = (AgentMLInput) input;
+                    String contextManagementName = agentInput.getContextManagementName();
+                    
+                    if (contextManagementName != null && !contextManagementName.trim().isEmpty()) {
+                        // Execute agent with context management
+                        executeAgentWithContextManagement(request, contextManagementName, channel, listener);
+                        return;
+                    }
+                }
+                
                 if (FunctionName.METRICS_CORRELATION.equals(functionName)) {
                     if (!isPythonModelEnabled) {
                         Exception exception = new IllegalArgumentException("This algorithm is not enabled from settings");
@@ -163,6 +190,8 @@ public class MLExecuteTaskRunner extends MLTaskRunner<MLExecuteTaskRequest, MLEx
                         return;
                     }
                 }
+                
+                // Default execution for all functions (including agents without context management)
                 mlEngine.execute(input, ActionListener.wrap(output -> {
                     MLExecuteTaskResponse response = new MLExecuteTaskResponse(functionName, output);
                     listener.onResponse(response);
@@ -176,6 +205,116 @@ public class MLExecuteTaskRunner extends MLTaskRunner<MLExecuteTaskRequest, MLEx
                 mlStats.getStat(MLNodeLevelStat.ML_EXECUTING_TASK_COUNT).decrement();
             }
         });
+    }
+
+    /**
+     * Execute agent with context management
+     */
+    private void executeAgentWithContextManagement(
+        MLExecuteTaskRequest request,
+        String contextManagementName,
+        TransportChannel channel,
+        ActionListener<MLExecuteTaskResponse> listener
+    ) {
+        log.debug("Executing agent with context management: {}", contextManagementName);
+        
+        // Lookup context management template
+        contextManagementTemplateService.getTemplate(contextManagementName, ActionListener.wrap(
+            template -> {
+                if (template == null) {
+                    listener.onFailure(new IllegalArgumentException(
+                        "Context management template not found: " + contextManagementName
+                    ));
+                    return;
+                }
+
+                try {
+                    // Create context managers from template
+                    java.util.List<ContextManager> contextManagers = createContextManagers(template);
+                    
+                    // Create HookRegistry with context managers
+                    HookRegistry hookRegistry = createHookRegistry(contextManagers, template);
+                    
+                    // Set hook registry in agent input
+                    AgentMLInput agentInput = (AgentMLInput) request.getInput();
+                    agentInput.setHookRegistry(hookRegistry);
+                    
+                    log.info("Executing agent with context management template: {} using {} context managers", 
+                        contextManagementName, contextManagers.size());
+                    
+                    // Execute agent with hook registry
+                    mlEngine.execute(request.getInput(), ActionListener.wrap(output -> {
+                        log.info("Agent execution completed successfully with context management");
+                        MLExecuteTaskResponse response = new MLExecuteTaskResponse(request.getFunctionName(), output);
+                        listener.onResponse(response);
+                    }, error -> {
+                        log.error("Agent execution failed with context management", error);
+                        listener.onFailure(error);
+                    }), channel);
+                    
+                } catch (Exception e) {
+                    log.error("Failed to create context managers from template: {}", contextManagementName, e);
+                    listener.onFailure(e);
+                }
+            },
+            error -> {
+                log.error("Failed to retrieve context management template: {}", contextManagementName, error);
+                listener.onFailure(error);
+            }
+        ));
+    }
+
+    /**
+     * Create context managers from template configuration
+     */
+    private java.util.List<ContextManager> createContextManagers(ContextManagementTemplate template) {
+        java.util.List<ContextManager> contextManagers = new java.util.ArrayList<>();
+        
+        // Iterate through all hooks in the template
+        for (java.util.Map.Entry<String, java.util.List<ContextManagerConfig>> entry : template.getHooks().entrySet()) {
+            String hookName = entry.getKey();
+            java.util.List<ContextManagerConfig> configs = entry.getValue();
+            
+            for (ContextManagerConfig config : configs) {
+                try {
+                    ContextManager manager = contextManagerFactory.createContextManager(config);
+                    if (manager != null) {
+                        contextManagers.add(manager);
+                        log.debug("Created context manager: {} for hook: {}", config.getType(), hookName);
+                    } else {
+                        log.warn("Failed to create context manager of type: {}", config.getType());
+                    }
+                } catch (Exception e) {
+                    log.error("Error creating context manager of type: {}", config.getType(), e);
+                    // Continue with other managers
+                }
+            }
+        }
+        
+        log.info("Created {} context managers from template: {}", contextManagers.size(), template.getName());
+        return contextManagers;
+    }
+
+    /**
+     * Create HookRegistry with context managers
+     */
+    private HookRegistry createHookRegistry(java.util.List<ContextManager> contextManagers, ContextManagementTemplate template) {
+        HookRegistry hookRegistry = new HookRegistry();
+        
+        if (!contextManagers.isEmpty()) {
+            // Create context manager hook provider
+            ContextManagerHookProvider hookProvider = new ContextManagerHookProvider(contextManagers);
+            
+            // Update hook configuration based on template
+            hookProvider.updateHookConfiguration(template.getHooks());
+            
+            // Register hooks
+            hookProvider.registerHooks(hookRegistry);
+            
+            log.debug("Registered context manager hooks for {} managers", contextManagers.size());
+        }
+        
+        return hookRegistry;
     }
 
 }
