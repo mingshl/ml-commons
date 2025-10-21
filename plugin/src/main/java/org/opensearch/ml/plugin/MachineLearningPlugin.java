@@ -83,18 +83,18 @@ import org.opensearch.ml.action.agents.TransportSearchAgentAction;
 import org.opensearch.ml.action.agents.UpdateAgentTransportAction;
 import org.opensearch.ml.action.batch.TransportBatchIngestionAction;
 import org.opensearch.ml.action.config.GetConfigTransportAction;
-import org.opensearch.ml.action.contextmanagement.ContextManagementTemplateService;
-import org.opensearch.ml.action.contextmanagement.ContextManagerFactory;
-import org.opensearch.ml.action.contextmanagement.CreateContextManagementTemplateTransportAction;
-import org.opensearch.ml.action.contextmanagement.DeleteContextManagementTemplateTransportAction;
-import org.opensearch.ml.action.contextmanagement.GetContextManagementTemplateTransportAction;
-import org.opensearch.ml.action.contextmanagement.ListContextManagementTemplatesTransportAction;
 import org.opensearch.ml.action.connector.DeleteConnectorTransportAction;
 import org.opensearch.ml.action.connector.ExecuteConnectorTransportAction;
 import org.opensearch.ml.action.connector.GetConnectorTransportAction;
 import org.opensearch.ml.action.connector.SearchConnectorTransportAction;
 import org.opensearch.ml.action.connector.TransportCreateConnectorAction;
 import org.opensearch.ml.action.connector.UpdateConnectorTransportAction;
+import org.opensearch.ml.action.contextmanagement.ContextManagementTemplateService;
+import org.opensearch.ml.action.contextmanagement.ContextManagerFactory;
+import org.opensearch.ml.action.contextmanagement.CreateContextManagementTemplateTransportAction;
+import org.opensearch.ml.action.contextmanagement.DeleteContextManagementTemplateTransportAction;
+import org.opensearch.ml.action.contextmanagement.GetContextManagementTemplateTransportAction;
+import org.opensearch.ml.action.contextmanagement.ListContextManagementTemplatesTransportAction;
 import org.opensearch.ml.action.controller.CreateControllerTransportAction;
 import org.opensearch.ml.action.controller.DeleteControllerTransportAction;
 import org.opensearch.ml.action.controller.DeployControllerTransportAction;
@@ -191,16 +191,16 @@ import org.opensearch.ml.common.transport.agent.MLRegisterAgentAction;
 import org.opensearch.ml.common.transport.agent.MLSearchAgentAction;
 import org.opensearch.ml.common.transport.batch.MLBatchIngestionAction;
 import org.opensearch.ml.common.transport.config.MLConfigGetAction;
-import org.opensearch.ml.common.transport.contextmanagement.MLCreateContextManagementTemplateAction;
-import org.opensearch.ml.common.transport.contextmanagement.MLDeleteContextManagementTemplateAction;
-import org.opensearch.ml.common.transport.contextmanagement.MLGetContextManagementTemplateAction;
-import org.opensearch.ml.common.transport.contextmanagement.MLListContextManagementTemplatesAction;
 import org.opensearch.ml.common.transport.connector.MLConnectorDeleteAction;
 import org.opensearch.ml.common.transport.connector.MLConnectorGetAction;
 import org.opensearch.ml.common.transport.connector.MLConnectorSearchAction;
 import org.opensearch.ml.common.transport.connector.MLCreateConnectorAction;
 import org.opensearch.ml.common.transport.connector.MLExecuteConnectorAction;
 import org.opensearch.ml.common.transport.connector.MLUpdateConnectorAction;
+import org.opensearch.ml.common.transport.contextmanagement.MLCreateContextManagementTemplateAction;
+import org.opensearch.ml.common.transport.contextmanagement.MLDeleteContextManagementTemplateAction;
+import org.opensearch.ml.common.transport.contextmanagement.MLGetContextManagementTemplateAction;
+import org.opensearch.ml.common.transport.contextmanagement.MLListContextManagementTemplatesAction;
 import org.opensearch.ml.common.transport.controller.MLControllerDeleteAction;
 import org.opensearch.ml.common.transport.controller.MLControllerGetAction;
 import org.opensearch.ml.common.transport.controller.MLCreateControllerAction;
@@ -330,19 +330,16 @@ import org.opensearch.ml.model.MLModelManager;
 import org.opensearch.ml.processor.MLInferenceIngestProcessor;
 import org.opensearch.ml.processor.MLInferenceSearchRequestProcessor;
 import org.opensearch.ml.processor.MLInferenceSearchResponseProcessor;
-import com.google.common.collect.ImmutableList;
 import org.opensearch.ml.rest.RestMLAddMemoriesAction;
 import org.opensearch.ml.rest.RestMLCancelBatchJobAction;
-import org.opensearch.ml.rest.RestMLCreateContextManagementTemplateAction;
-import org.opensearch.ml.rest.RestMLDeleteContextManagementTemplateAction;
-import org.opensearch.ml.rest.RestMLGetContextManagementTemplateAction;
-import org.opensearch.ml.rest.RestMLListContextManagementTemplatesAction;
 import org.opensearch.ml.rest.RestMLCreateConnectorAction;
+import org.opensearch.ml.rest.RestMLCreateContextManagementTemplateAction;
 import org.opensearch.ml.rest.RestMLCreateControllerAction;
 import org.opensearch.ml.rest.RestMLCreateMemoryContainerAction;
 import org.opensearch.ml.rest.RestMLCreateSessionAction;
 import org.opensearch.ml.rest.RestMLDeleteAgentAction;
 import org.opensearch.ml.rest.RestMLDeleteConnectorAction;
+import org.opensearch.ml.rest.RestMLDeleteContextManagementTemplateAction;
 import org.opensearch.ml.rest.RestMLDeleteControllerAction;
 import org.opensearch.ml.rest.RestMLDeleteMemoriesByQueryAction;
 import org.opensearch.ml.rest.RestMLDeleteMemoryAction;
@@ -356,6 +353,7 @@ import org.opensearch.ml.rest.RestMLExecuteStreamAction;
 import org.opensearch.ml.rest.RestMLGetAgentAction;
 import org.opensearch.ml.rest.RestMLGetConfigAction;
 import org.opensearch.ml.rest.RestMLGetConnectorAction;
+import org.opensearch.ml.rest.RestMLGetContextManagementTemplateAction;
 import org.opensearch.ml.rest.RestMLGetControllerAction;
 import org.opensearch.ml.rest.RestMLGetIndexInsightAction;
 import org.opensearch.ml.rest.RestMLGetIndexInsightConfigAction;
@@ -365,6 +363,7 @@ import org.opensearch.ml.rest.RestMLGetModelAction;
 import org.opensearch.ml.rest.RestMLGetModelGroupAction;
 import org.opensearch.ml.rest.RestMLGetTaskAction;
 import org.opensearch.ml.rest.RestMLGetToolAction;
+import org.opensearch.ml.rest.RestMLListContextManagementTemplatesAction;
 import org.opensearch.ml.rest.RestMLListToolsAction;
 import org.opensearch.ml.rest.RestMLPredictionAction;
 import org.opensearch.ml.rest.RestMLPredictionStreamAction;
@@ -462,6 +461,7 @@ import org.opensearch.transport.client.Client;
 import org.opensearch.watcher.ResourceWatcherService;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.ImmutableList;
 
 import lombok.SneakyThrows;
 
@@ -811,7 +811,7 @@ public class MachineLearningPlugin extends Plugin
         ContextManagerFactory contextManagerFactory = new ContextManagerFactory(
             new org.opensearch.ml.common.contextmanager.ActivationRuleFactory()
         );
-        
+
         mlExecuteTaskRunner = new MLExecuteTaskRunner(
             threadPool,
             clusterService,
@@ -1100,10 +1100,15 @@ public class MachineLearningPlugin extends Plugin
         RestMLMcpToolsRemoveAction restMLRemoveMcpToolsAction = new RestMLMcpToolsRemoveAction(clusterService, mlFeatureEnabledSetting);
         RestMLMcpToolsListAction restMLListMcpToolsAction = new RestMLMcpToolsListAction(mlFeatureEnabledSetting);
         RestMLMcpToolsUpdateAction restMLMcpToolsUpdateAction = new RestMLMcpToolsUpdateAction(clusterService, mlFeatureEnabledSetting);
-        RestMLCreateContextManagementTemplateAction restMLCreateContextManagementTemplateAction = new RestMLCreateContextManagementTemplateAction(mlFeatureEnabledSetting);
-        RestMLGetContextManagementTemplateAction restMLGetContextManagementTemplateAction = new RestMLGetContextManagementTemplateAction(mlFeatureEnabledSetting);
-        RestMLListContextManagementTemplatesAction restMLListContextManagementTemplatesAction = new RestMLListContextManagementTemplatesAction(mlFeatureEnabledSetting);
-        RestMLDeleteContextManagementTemplateAction restMLDeleteContextManagementTemplateAction = new RestMLDeleteContextManagementTemplateAction(mlFeatureEnabledSetting);
+        RestMLCreateContextManagementTemplateAction restMLCreateContextManagementTemplateAction =
+            new RestMLCreateContextManagementTemplateAction(mlFeatureEnabledSetting);
+        RestMLGetContextManagementTemplateAction restMLGetContextManagementTemplateAction = new RestMLGetContextManagementTemplateAction(
+            mlFeatureEnabledSetting
+        );
+        RestMLListContextManagementTemplatesAction restMLListContextManagementTemplatesAction =
+            new RestMLListContextManagementTemplatesAction(mlFeatureEnabledSetting);
+        RestMLDeleteContextManagementTemplateAction restMLDeleteContextManagementTemplateAction =
+            new RestMLDeleteContextManagementTemplateAction(mlFeatureEnabledSetting);
         return ImmutableList
             .of(
                 restMLStatsAction,

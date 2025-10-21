@@ -78,31 +78,41 @@ public class ToolsOutputTruncateManager implements ContextManager {
 
     @Override
     public boolean shouldActivate(ContextManagerContext context) {
+        log
+            .info(
+                "ToolsOutputTruncateManager.shouldActivate() called - activationRules: {}",
+                activationRules == null ? "null" : activationRules.size()
+            );
+
         if (activationRules == null || activationRules.isEmpty()) {
             // No activation rules means always activate
+            log.info("No activation rules configured, always activating ToolsOutputTruncateManager");
             return true;
         }
 
         // All activation rules must be satisfied (AND logic)
         for (ActivationRule rule : activationRules) {
             if (!rule.evaluate(context)) {
-                log.debug("Activation rule not satisfied: {}", rule.getDescription());
+                log.info("Activation rule not satisfied: {}", rule.getDescription());
                 return false;
             }
         }
 
-        log.debug("All activation rules satisfied, manager will execute");
+        log.info("All activation rules satisfied, ToolsOutputTruncateManager will execute");
         return true;
     }
 
     @Override
     public void execute(ContextManagerContext context) {
+        log.info("ToolsOutputTruncateManager.execute() called!");
         List<Map<String, Object>> toolInteractions = context.getToolInteractions();
 
         if (toolInteractions == null || toolInteractions.isEmpty()) {
-            log.debug("No tool interactions to process");
+            log.info("No tool interactions to process in ToolsOutputTruncateManager");
             return;
         }
+
+        log.info("Processing {} tool interactions in ToolsOutputTruncateManager", toolInteractions.size());
 
         int truncatedCount = 0;
         int totalTokensSaved = 0;

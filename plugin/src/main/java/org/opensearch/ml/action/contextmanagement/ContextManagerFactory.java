@@ -8,12 +8,11 @@ package org.opensearch.ml.action.contextmanagement;
 import java.util.Map;
 
 import org.opensearch.common.inject.Inject;
+import org.opensearch.ml.common.contextmanager.ActivationRuleFactory;
 import org.opensearch.ml.common.contextmanager.ContextManager;
 import org.opensearch.ml.common.contextmanager.ContextManagerConfig;
 import org.opensearch.ml.common.contextmanager.SlidingWindowManager;
 import org.opensearch.ml.common.contextmanager.ToolsOutputTruncateManager;
-
-import org.opensearch.ml.common.contextmanager.ActivationRuleFactory;
 
 import lombok.extern.log4j.Log4j2;
 
@@ -24,7 +23,7 @@ import lombok.extern.log4j.Log4j2;
  */
 @Log4j2
 public class ContextManagerFactory {
-    
+
     private final ActivationRuleFactory activationRuleFactory;
 
     @Inject
@@ -59,11 +58,11 @@ public class ContextManagerFactory {
                 break;
             // Add more manager types as they are implemented
             // case "SummarizingManager":
-            //     manager = createSummarizingManager(managerConfig);
-            //     break;
+            // manager = createSummarizingManager(managerConfig);
+            // break;
             // case "SystemPromptAugmentationManager":
-            //     manager = createSystemPromptAugmentationManager(managerConfig);
-            //     break;
+            // manager = createSystemPromptAugmentationManager(managerConfig);
+            // break;
             default:
                 throw new IllegalArgumentException("Unsupported context manager type: " + type);
         }
@@ -78,7 +77,7 @@ public class ContextManagerFactory {
             if (activationConfig != null) {
                 fullConfig.put("activation", activationConfig);
             }
-            
+
             manager.initialize(fullConfig);
             log.debug("Successfully created and initialized context manager: {}", type);
             return manager;
@@ -103,12 +102,12 @@ public class ContextManagerFactory {
     }
 
     // Add more factory methods for other context manager types as they are implemented
-    
+
     // private ContextManager createSummarizingManager(Map<String, Object> config) {
-    //     return new SummarizingManager();
+    // return new SummarizingManager();
     // }
-    
+
     // private ContextManager createSystemPromptAugmentationManager(Map<String, Object> config) {
-    //     return new SystemPromptAugmentationManager();
+    // return new SystemPromptAugmentationManager();
     // }
 }

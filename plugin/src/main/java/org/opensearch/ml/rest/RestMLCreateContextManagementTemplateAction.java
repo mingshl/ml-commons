@@ -44,15 +44,20 @@ public class RestMLCreateContextManagementTemplateAction extends BaseRestHandler
 
     @Override
     public List<Route> routes() {
-        return ImmutableList.of(
-            new Route(RestRequest.Method.PUT, String.format(Locale.ROOT, "%s/context_management/{%s}", ML_BASE_URI, PARAMETER_TEMPLATE_NAME))
-        );
+        return ImmutableList
+            .of(
+                new Route(
+                    RestRequest.Method.PUT,
+                    String.format(Locale.ROOT, "%s/context_management/{%s}", ML_BASE_URI, PARAMETER_TEMPLATE_NAME)
+                )
+            );
     }
 
     @Override
     public RestChannelConsumer prepareRequest(RestRequest request, NodeClient client) throws IOException {
         MLCreateContextManagementTemplateRequest createRequest = getRequest(request);
-        return channel -> client.execute(MLCreateContextManagementTemplateAction.INSTANCE, createRequest, new RestToXContentListener<>(channel));
+        return channel -> client
+            .execute(MLCreateContextManagementTemplateAction.INSTANCE, createRequest, new RestToXContentListener<>(channel));
     }
 
     /**
@@ -66,7 +71,7 @@ public class RestMLCreateContextManagementTemplateAction extends BaseRestHandler
         if (!mlFeatureEnabledSetting.isAgentFrameworkEnabled()) {
             throw new IllegalStateException("Agent framework is disabled");
         }
-        
+
         String templateName = request.param(PARAMETER_TEMPLATE_NAME);
         if (templateName == null || templateName.trim().isEmpty()) {
             throw new IllegalArgumentException("Template name is required");
@@ -75,10 +80,10 @@ public class RestMLCreateContextManagementTemplateAction extends BaseRestHandler
         XContentParser parser = request.contentParser();
         ensureExpectedToken(XContentParser.Token.START_OBJECT, parser.nextToken(), parser);
         ContextManagementTemplate template = ContextManagementTemplate.parse(parser);
-        
+
         // Set the template name from URL parameter
         template = template.toBuilder().name(templateName).build();
-        
+
         return new MLCreateContextManagementTemplateRequest(templateName, template);
     }
 }

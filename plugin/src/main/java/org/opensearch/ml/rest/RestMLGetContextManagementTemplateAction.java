@@ -41,9 +41,13 @@ public class RestMLGetContextManagementTemplateAction extends BaseRestHandler {
 
     @Override
     public List<Route> routes() {
-        return ImmutableList.of(
-            new Route(RestRequest.Method.GET, String.format(Locale.ROOT, "%s/context_management/{%s}", ML_BASE_URI, PARAMETER_TEMPLATE_NAME))
-        );
+        return ImmutableList
+            .of(
+                new Route(
+                    RestRequest.Method.GET,
+                    String.format(Locale.ROOT, "%s/context_management/{%s}", ML_BASE_URI, PARAMETER_TEMPLATE_NAME)
+                )
+            );
     }
 
     @Override
@@ -63,7 +67,7 @@ public class RestMLGetContextManagementTemplateAction extends BaseRestHandler {
         if (!mlFeatureEnabledSetting.isAgentFrameworkEnabled()) {
             throw new IllegalStateException("Agent framework is disabled");
         }
-        
+
         String templateName = request.param(PARAMETER_TEMPLATE_NAME);
         if (templateName == null || templateName.trim().isEmpty()) {
             throw new IllegalArgumentException("Template name is required");

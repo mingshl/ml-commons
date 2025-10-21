@@ -12,8 +12,8 @@ import java.util.Map;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.ml.action.contextmanagement.ContextManagementTemplateService;
 import org.opensearch.ml.action.contextmanagement.ContextManagerFactory;
-import org.opensearch.ml.common.contextmanager.ContextManager;
 import org.opensearch.ml.common.contextmanager.ContextManagementTemplate;
+import org.opensearch.ml.common.contextmanager.ContextManager;
 import org.opensearch.ml.common.contextmanager.ContextManagerConfig;
 import org.opensearch.ml.common.contextmanager.ContextManagerHookProvider;
 import org.opensearch.ml.common.hooks.HookRegistry;
@@ -84,35 +84,30 @@ public class MLAgentExecutor {
         ActionListener<MLExecuteTaskResponse> listener
     ) {
         // Lookup context management template
-        contextManagementTemplateService.getTemplate(contextManagementName, ActionListener.wrap(
-            template -> {
-                if (template == null) {
-                    listener.onFailure(new IllegalArgumentException(
-                        "Context management template not found: " + contextManagementName
-                    ));
-                    return;
-                }
-
-                try {
-                    // Create context managers from template
-                    List<ContextManager> contextManagers = createContextManagers(template);
-                    
-                    // Create HookRegistry with context managers
-                    HookRegistry hookRegistry = createHookRegistry(contextManagers, template);
-                    
-                    // Execute agent with hook registry
-                    executeAgentWithHooks(request, hookRegistry, transportService, listener);
-                    
-                } catch (Exception e) {
-                    log.error("Failed to create context managers from template: {}", contextManagementName, e);
-                    listener.onFailure(e);
-                }
-            },
-            error -> {
-                log.error("Failed to retrieve context management template: {}", contextManagementName, error);
-                listener.onFailure(error);
+        contextManagementTemplateService.getTemplate(contextManagementName, ActionListener.wrap(template -> {
+            if (template == null) {
+                listener.onFailure(new IllegalArgumentException("Context management template not found: " + contextManagementName));
+                return;
             }
-        ));
+
+            try {
+                // Create context managers from template
+                List<ContextManager> contextManagers = createContextManagers(template);
+
+                // Create HookRegistry with context managers
+                HookRegistry hookRegistry = createHookRegistry(contextManagers, template);
+
+                // Execute agent with hook registry
+                executeAgentWithHooks(request, hookRegistry, transportService, listener);
+
+            } catch (Exception e) {
+                log.error("Failed to create context managers from template: {}", contextManagementName, e);
+                listener.onFailure(e);
+            }
+        }, error -> {
+            log.error("Failed to retrieve context management template: {}", contextManagementName, error);
+            listener.onFailure(error);
+        }));
     }
 
     /**
@@ -133,12 +128,12 @@ public class MLAgentExecutor {
      */
     private List<ContextManager> createContextManagers(ContextManagementTemplate template) {
         List<ContextManager> contextManagers = new ArrayList<>();
-        
+
         // Iterate through all hooks in the template
         for (Map.Entry<String, List<ContextManagerConfig>> entry : template.getHooks().entrySet()) {
             String hookName = entry.getKey();
             List<ContextManagerConfig> configs = entry.getValue();
-            
+
             for (ContextManagerConfig config : configs) {
                 try {
                     ContextManager manager = contextManagerFactory.createContextManager(config);
@@ -154,7 +149,7 @@ public class MLAgentExecutor {
                 }
             }
         }
-        
+
         log.info("Created {} context managers from template: {}", contextManagers.size(), template.getName());
         return contextManagers;
     }
@@ -164,20 +159,20 @@ public class MLAgentExecutor {
      */
     private HookRegistry createHookRegistry(List<ContextManager> contextManagers, ContextManagementTemplate template) {
         HookRegistry hookRegistry = new HookRegistry();
-        
+
         if (!contextManagers.isEmpty()) {
             // Create context manager hook provider
             ContextManagerHookProvider hookProvider = new ContextManagerHookProvider(contextManagers);
-            
+
             // Update hook configuration based on template
             hookProvider.updateHookConfiguration(template.getHooks());
-            
+
             // Register hooks
             hookProvider.registerHooks(hookRegistry);
-            
+
             log.debug("Registered context manager hooks for {} managers", contextManagers.size());
         }
-        
+
         return hookRegistry;
     }
 
@@ -194,22 +189,19 @@ public class MLAgentExecutor {
         try {
             // Extract agent input
             AgentMLInput agentInput = (AgentMLInput) request.getInput();
-            
+
             // Set hook registry in agent input so agent runners can access it
             agentInput.setHookRegistry(hookRegistry);
-            
+
             // Execute through the ML engine with the enhanced request
-            mlEngine.execute(request.getInput(), ActionListener.wrap(
-                output -> {
-                    MLExecuteTaskResponse response = new MLExecuteTaskResponse(request.getFunctionName(), output);
-                    listener.onResponse(response);
-                },
-                error -> {
-                    log.error("Agent execution failed", error);
-                    listener.onFailure(error);
-                }
-            ), null);
-            
+            mlEngine.execute(request.getInput(), ActionListener.wrap(output -> {
+                MLExecuteTaskResponse response = new MLExecuteTaskResponse(request.getFunctionName(), output);
+                listener.onResponse(response);
+            }, error -> {
+                log.error("Agent execution failed", error);
+                listener.onFailure(error);
+            }), null);
+
         } catch (Exception e) {
             log.error("Failed to execute agent with hooks", e);
             listener.onFailure(e);

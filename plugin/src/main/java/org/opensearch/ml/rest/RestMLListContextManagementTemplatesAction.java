@@ -40,15 +40,14 @@ public class RestMLListContextManagementTemplatesAction extends BaseRestHandler 
 
     @Override
     public List<Route> routes() {
-        return ImmutableList.of(
-            new Route(RestRequest.Method.GET, String.format(Locale.ROOT, "%s/context_management", ML_BASE_URI))
-        );
+        return ImmutableList.of(new Route(RestRequest.Method.GET, String.format(Locale.ROOT, "%s/context_management", ML_BASE_URI)));
     }
 
     @Override
     public RestChannelConsumer prepareRequest(RestRequest request, NodeClient client) throws IOException {
         MLListContextManagementTemplatesRequest listRequest = getRequest(request);
-        return channel -> client.execute(MLListContextManagementTemplatesAction.INSTANCE, listRequest, new RestToXContentListener<>(channel));
+        return channel -> client
+            .execute(MLListContextManagementTemplatesAction.INSTANCE, listRequest, new RestToXContentListener<>(channel));
     }
 
     /**
@@ -62,7 +61,7 @@ public class RestMLListContextManagementTemplatesAction extends BaseRestHandler 
         if (!mlFeatureEnabledSetting.isAgentFrameworkEnabled()) {
             throw new IllegalStateException("Agent framework is disabled");
         }
-        
+
         int from = request.paramAsInt("from", 0);
         int size = request.paramAsInt("size", 10);
 

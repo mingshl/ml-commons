@@ -78,7 +78,7 @@ public class RestMLExecuteAction extends BaseRestHandler {
     @Override
     public RestChannelConsumer prepareRequest(RestRequest request, NodeClient client) throws IOException {
         MLExecuteTaskRequest mlExecuteTaskRequest = getRequest(request);
-        
+
         // Extract context_management query parameter for agent execution
         String uri = request.getHttpRequest().uri();
         if (uri.startsWith(ML_BASE_URI + "/agents/")) {
