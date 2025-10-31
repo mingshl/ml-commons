@@ -14,7 +14,6 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.opensearch.ml.common.agent.MLToolSpec;
 import org.opensearch.ml.common.contextmanager.ContextManagerContext;
-import org.opensearch.ml.common.conversation.Interaction;
 import org.opensearch.ml.common.hooks.EnhancedPostToolEvent;
 import org.opensearch.ml.common.hooks.HookRegistry;
 import org.opensearch.ml.common.hooks.PreLLMEvent;
@@ -89,10 +88,7 @@ public class AgentContextUtil {
 
         if (memory instanceof ConversationIndexMemory) {
             String chatHistory = parameters.get(CHAT_HISTORY);
-            if (chatHistory != null) {
-                List<Interaction> chatHistoryList = new ArrayList<>();
-                builder.chatHistory(chatHistoryList);
-            }
+            // TODO to add chatHistory into context, currently there is no context manager working on chat_history
         }
 
         if (toolSpecs != null) {
