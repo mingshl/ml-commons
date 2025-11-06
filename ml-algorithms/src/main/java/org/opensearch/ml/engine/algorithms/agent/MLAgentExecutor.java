@@ -216,7 +216,7 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
                                         MLAgent mlAgent = MLAgent.parse(parser);
                                         // Use existing HookRegistry from AgentMLInput if available (set by MLExecuteTaskRunner for template
                                         // references)
-                                        // Otherwise remain null hookRegistry
+                                        // Otherwise create a fresh HookRegistry for agent execution
                                         final HookRegistry hookRegistry = agentMLInput.getHookRegistry() != null
                                             ? agentMLInput.getHookRegistry()
                                             : new HookRegistry();

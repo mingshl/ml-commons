@@ -48,6 +48,7 @@ public class ContextManagerHookProvider implements HookProvider {
     @Override
     public void registerHooks(HookRegistry registry) {
         // Only register callbacks for hooks that have managers configured
+        // This prevents duplicate registrations and follows our selective approach
         if (hookToManagersMap.containsKey("PRE_LLM")) {
             registry.addCallback(PreLLMEvent.class, this::handlePreLLM);
         }

@@ -37,6 +37,7 @@ import org.opensearch.action.get.GetRequest;
 import org.opensearch.action.get.GetResponse;
 import org.opensearch.action.index.IndexRequest;
 import org.opensearch.action.index.IndexResponse;
+import org.opensearch.action.search.SearchRequest;
 import org.opensearch.action.search.SearchResponse;
 import org.opensearch.action.support.clustermanager.AcknowledgedResponse;
 import org.opensearch.action.update.UpdateRequest;
@@ -71,7 +72,6 @@ import org.opensearch.ml.common.memorycontainer.RemoteStore;
 import org.opensearch.ml.common.utils.StringUtils;
 import org.opensearch.remote.metadata.client.GetDataObjectRequest;
 import org.opensearch.remote.metadata.client.SdkClient;
-import org.opensearch.remote.metadata.client.SearchDataObjectRequest;
 import org.opensearch.remote.metadata.common.SdkClientUtils;
 import org.opensearch.search.builder.SearchSourceBuilder;
 import org.opensearch.search.fetch.subphase.FetchSourceContext;
@@ -285,11 +285,7 @@ public class MemoryContainerHelper {
         }
     }
 
-    public void searchData(
-        MemoryConfiguration configuration,
-        SearchDataObjectRequest searchRequest,
-        ActionListener<SearchResponse> listener
-    ) {
+    public void searchData(MemoryConfiguration configuration, SearchRequest searchRequest, ActionListener<SearchResponse> listener) {
         try {
             // Check if remote store is configured (either with connectorId or internal connector)
             if (configuration.getRemoteStore() != null
@@ -303,13 +299,13 @@ public class MemoryContainerHelper {
                     final ActionListener<SearchResponse> doubleWrappedListener = ActionListener
                         .wrap(wrappedListener::onResponse, e -> wrapListenerToHandleSearchIndexNotFound(e, wrappedListener));
 
-                    sdkClient.searchDataObjectAsync(searchRequest).whenComplete(SdkClientUtils.wrapSearchCompletion(doubleWrappedListener));
+                    client.search(searchRequest, doubleWrappedListener);
                 }
             } else {
                 final ActionListener<SearchResponse> doubleWrappedListener = ActionListener
                     .wrap(listener::onResponse, e -> wrapListenerToHandleSearchIndexNotFound(e, listener));
 
-                sdkClient.searchDataObjectAsync(searchRequest).whenComplete(SdkClientUtils.wrapSearchCompletion(doubleWrappedListener));
+                client.search(searchRequest, doubleWrappedListener);
             }
         } catch (Exception e) {
             log.error("Failed to search data", e);
@@ -727,8 +723,9 @@ public class MemoryContainerHelper {
 
     public SearchSourceBuilder addOwnerIdFilter(User user, SearchSourceBuilder searchSourceBuilder) {
         BoolQueryBuilder boolQueryBuilder = new BoolQueryBuilder();
-        boolQueryBuilder.should(QueryBuilders.termsQuery(OWNER_ID_FIELD, user.getName()));
-
+        if (user != null) {
+            boolQueryBuilder.should(QueryBuilders.termsQuery(OWNER_ID_FIELD, user.getName()));
+        }
         return applyFilterToSearchSource(searchSourceBuilder, boolQueryBuilder);
     }
 
@@ -768,7 +765,7 @@ public class MemoryContainerHelper {
             return searchSourceBuilder;
         }
         BoolQueryBuilder boolQueryBuilder = QueryBuilders.boolQuery();
-        boolQueryBuilder.filter(QueryBuilders.termQuery(MEMORY_CONTAINER_ID_FIELD, containerId));
+        boolQueryBuilder.filter(QueryBuilders.termQuery(MEMORY_CONTAINER_ID_FIELD + ".keyword", containerId));
 
         return applyFilterToSearchSource(searchSourceBuilder, boolQueryBuilder);
     }
@@ -789,7 +786,7 @@ public class MemoryContainerHelper {
 
         BoolQueryBuilder filteredQuery = QueryBuilders.boolQuery();
         filteredQuery.must(query);
-        filteredQuery.filter(QueryBuilders.termQuery(MEMORY_CONTAINER_ID_FIELD, containerId));
+        filteredQuery.filter(QueryBuilders.termQuery(MEMORY_CONTAINER_ID_FIELD + ".keyword", containerId));
 
         return filteredQuery;
     }
@@ -817,16 +814,7 @@ public class MemoryContainerHelper {
         searchSourceBuilder.size(0); // We only need the total count
         searchSourceBuilder.trackTotalHits(true);
 
-        SearchDataObjectRequest.Builder requestBuilder = SearchDataObjectRequest
-            .builder()
-            .indices(ML_MEMORY_CONTAINER_INDEX)
-            .searchSourceBuilder(searchSourceBuilder);
-
-        if (tenantId != null) {
-            requestBuilder.tenantId(tenantId);
-        }
-
-        SearchDataObjectRequest searchRequest = requestBuilder.build();
+        SearchRequest searchRequest = new SearchRequest(ML_MEMORY_CONTAINER_INDEX).source(searchSourceBuilder);
 
         try (ThreadContext.StoredContext context = client.threadPool().getThreadContext().stashContext()) {
             ActionListener<SearchResponse> wrappedListener = ActionListener.runBefore(ActionListener.wrap(response -> {
@@ -837,7 +825,7 @@ public class MemoryContainerHelper {
                 listener.onFailure(e);
             }), context::restore);
 
-            sdkClient.searchDataObjectAsync(searchRequest).whenComplete(SdkClientUtils.wrapSearchCompletion(wrappedListener));
+            client.search(searchRequest, wrappedListener);
         } catch (Exception e) {
             log.error("Failed to search for containers with prefix: " + indexPrefix, e);
             listener.onFailure(e);
