@@ -1,0 +1,4 @@
+{
+    "gradle.debug": true,
+    "gradle.allowParallelRun": true
+}
