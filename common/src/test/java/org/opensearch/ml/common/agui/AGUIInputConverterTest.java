@@ -10,12 +10,13 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_PARAM_CONTEXT;
-import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_PARAM_MESSAGES;
+import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_PARAM_LOAD_CHAT_HISTORY;
 import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_PARAM_RUN_ID;
 import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_PARAM_STATE;
 import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_PARAM_THREAD_ID;
 import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_PARAM_TOOLS;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -25,7 +26,10 @@ import org.opensearch.ml.common.dataset.remote.RemoteInferenceInputDataSet;
 import org.opensearch.ml.common.input.execute.agent.AgentMLInput;
 import org.opensearch.ml.common.input.execute.agent.ContentBlock;
 import org.opensearch.ml.common.input.execute.agent.ContentType;
+import org.opensearch.ml.common.input.execute.agent.ImageContent;
 import org.opensearch.ml.common.input.execute.agent.Message;
+import org.opensearch.ml.common.input.execute.agent.SourceType;
+import org.opensearch.ml.common.input.execute.agent.ToolCall;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
@@ -474,7 +478,6 @@ public class AGUIInputConverterTest {
         // All fields should be preserved
         assertTrue(params.containsKey(AGUI_PARAM_THREAD_ID));
         assertTrue(params.containsKey(AGUI_PARAM_RUN_ID));
-        assertTrue(params.containsKey(AGUI_PARAM_MESSAGES));
         assertTrue(params.containsKey(AGUI_PARAM_TOOLS));
     }
 
@@ -695,6 +698,187 @@ public class AGUIInputConverterTest {
         Map<String, String> params = dataSet.getParameters();
         assertEquals(threadId, params.get("memory_id"));
         assertEquals(threadId, params.get(AGUI_PARAM_THREAD_ID));
+    }
+
+    // ==================== Tests for empty messages handling ====================
+
+    @Test
+    public void testConvertFromAGUIInput_EmptyMessages_NoAgentInput() {
+        JsonObject aguiInput = new JsonObject();
+        aguiInput.addProperty("threadId", "thread-123");
+        aguiInput.addProperty("runId", "run-456");
+        aguiInput.add("messages", new JsonArray()); // empty array
+        aguiInput.add("tools", new JsonArray());
+
+        AgentMLInput result = AGUIInputConverter.convertFromAGUIInput(gson.toJson(aguiInput), "agent-id", null, false);
+
+        assertNotNull(result);
+        // AgentInput should be null since messages are empty
+        assertTrue("AgentInput should be null for empty messages", result.getAgentInput() == null);
+
+        // AGUI_PARAM_LOAD_CHAT_HISTORY should be set when messages are empty
+        RemoteInferenceInputDataSet dataset = (RemoteInferenceInputDataSet) result.getInputDataset();
+        assertEquals("true", dataset.getParameters().get(AGUI_PARAM_LOAD_CHAT_HISTORY));
+    }
+
+    // ==================== Tests for convertToAGUIFormat ====================
+
+    @Test
+    public void testConvertToAGUIFormat_NullMessages() {
+        List<Map<String, Object>> result = AGUIInputConverter.convertToAGUIFormat(null);
+        assertNotNull(result);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    public void testConvertToAGUIFormat_EmptyMessages() {
+        List<Map<String, Object>> result = AGUIInputConverter.convertToAGUIFormat(new ArrayList<>());
+        assertNotNull(result);
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    public void testConvertToAGUIFormat_SingleTextContent() {
+        ContentBlock textBlock = new ContentBlock();
+        textBlock.setType(ContentType.TEXT);
+        textBlock.setText("Hello world");
+
+        Message message = new Message("user", List.of(textBlock));
+
+        List<Map<String, Object>> result = AGUIInputConverter.convertToAGUIFormat(List.of(message));
+
+        assertEquals(1, result.size());
+        assertEquals("user", result.get(0).get("role"));
+        // Single text content should be a string, not array
+        assertEquals("Hello world", result.get(0).get("content"));
+    }
+
+    @Test
+    public void testConvertToAGUIFormat_MultipleContentBlocks() {
+        ContentBlock textBlock = new ContentBlock();
+        textBlock.setType(ContentType.TEXT);
+        textBlock.setText("Describe this image");
+
+        ImageContent imageContent = new ImageContent();
+        imageContent.setType(SourceType.BASE64);
+        imageContent.setFormat("png");
+        imageContent.setData("base64data");
+
+        ContentBlock imageBlock = new ContentBlock();
+        imageBlock.setType(ContentType.IMAGE);
+        imageBlock.setImage(imageContent);
+
+        Message message = new Message("user", List.of(textBlock, imageBlock));
+
+        List<Map<String, Object>> result = AGUIInputConverter.convertToAGUIFormat(List.of(message));
+
+        assertEquals(1, result.size());
+        // Multiple content blocks should be an array
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> content = (List<Map<String, Object>>) result.get(0).get("content");
+        assertEquals(2, content.size());
+        assertEquals("text", content.get(0).get("type"));
+        assertEquals("Describe this image", content.get(0).get("text"));
+        assertEquals("binary", content.get(1).get("type"));
+        assertEquals("image/png", content.get(1).get("mimeType"));
+        assertEquals("base64data", content.get(1).get("data"));
+    }
+
+    @Test
+    public void testConvertToAGUIFormat_WithToolCalls() {
+        ContentBlock textBlock = new ContentBlock();
+        textBlock.setType(ContentType.TEXT);
+        textBlock.setText("Let me check");
+
+        Message message = new Message("assistant", List.of(textBlock));
+        ToolCall.ToolFunction function = new ToolCall.ToolFunction("get_weather", "{\"location\":\"NYC\"}");
+        ToolCall toolCall = new ToolCall("call-123", "function", function);
+        message.setToolCalls(List.of(toolCall));
+
+        List<Map<String, Object>> result = AGUIInputConverter.convertToAGUIFormat(List.of(message));
+
+        assertEquals(1, result.size());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> toolCalls = (List<Map<String, Object>>) result.get(0).get("toolCalls");
+        assertNotNull(toolCalls);
+        assertEquals(1, toolCalls.size());
+        assertEquals("call-123", toolCalls.get(0).get("id"));
+        assertEquals("function", toolCalls.get(0).get("type"));
+        @SuppressWarnings("unchecked")
+        Map<String, String> func = (Map<String, String>) toolCalls.get(0).get("function");
+        assertEquals("get_weather", func.get("name"));
+        assertEquals("{\"location\":\"NYC\"}", func.get("arguments"));
+    }
+
+    @Test
+    public void testConvertToAGUIFormat_WithToolCallId() {
+        ContentBlock textBlock = new ContentBlock();
+        textBlock.setType(ContentType.TEXT);
+        textBlock.setText("72F and sunny");
+
+        Message message = new Message("tool", List.of(textBlock));
+        message.setToolCallId("call-123");
+
+        List<Map<String, Object>> result = AGUIInputConverter.convertToAGUIFormat(List.of(message));
+
+        assertEquals(1, result.size());
+        assertEquals("tool", result.get(0).get("role"));
+        assertEquals("call-123", result.get(0).get("toolCallId"));
+    }
+
+    @Test
+    public void testConvertToAGUIFormat_MultipleMessages() {
+        ContentBlock userContent = new ContentBlock();
+        userContent.setType(ContentType.TEXT);
+        userContent.setText("What's the weather?");
+        Message userMsg = new Message("user", List.of(userContent));
+
+        ContentBlock assistantContent = new ContentBlock();
+        assistantContent.setType(ContentType.TEXT);
+        assistantContent.setText("It's 72F and sunny!");
+        Message assistantMsg = new Message("assistant", List.of(assistantContent));
+
+        List<Map<String, Object>> result = AGUIInputConverter.convertToAGUIFormat(List.of(userMsg, assistantMsg));
+
+        assertEquals(2, result.size());
+        assertEquals("user", result.get(0).get("role"));
+        assertEquals("What's the weather?", result.get(0).get("content"));
+        assertEquals("assistant", result.get(1).get("role"));
+        assertEquals("It's 72F and sunny!", result.get(1).get("content"));
+    }
+
+    @Test
+    public void testConvertToAGUIFormat_RoundTrip() {
+        // Test that converting from AGUI format and back produces equivalent messages
+        String aguiInputJson = """
+            {
+              "threadId": "thread-123",
+              "runId": "run-456",
+              "tools": [],
+              "messages": [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi there!"},
+                {"role": "user", "content": "What's 2+2?"},
+                {"role": "assistant", "content": "4"}
+              ]
+            }
+            """;
+
+        AgentMLInput agentMLInput = AGUIInputConverter.convertFromAGUIInput(aguiInputJson, "agent-id", null, false);
+        @SuppressWarnings("unchecked")
+        List<Message> messages = (List<Message>) agentMLInput.getAgentInput().getInput();
+
+        List<Map<String, Object>> roundTripped = AGUIInputConverter.convertToAGUIFormat(messages);
+
+        assertEquals(4, roundTripped.size());
+        assertEquals("user", roundTripped.get(0).get("role"));
+        assertEquals("Hello", roundTripped.get(0).get("content"));
+        assertEquals("assistant", roundTripped.get(1).get("role"));
+        assertEquals("Hi there!", roundTripped.get(1).get("content"));
+        assertEquals("user", roundTripped.get(2).get("role"));
+        assertEquals("What's 2+2?", roundTripped.get(2).get("content"));
+        assertEquals("assistant", roundTripped.get(3).get("role"));
+        assertEquals("4", roundTripped.get(3).get("content"));
     }
 
     private String buildMinimalAGUIInput(String threadId, String runId) {

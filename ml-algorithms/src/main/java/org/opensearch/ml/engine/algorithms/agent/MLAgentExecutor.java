@@ -9,6 +9,7 @@ import static org.opensearch.common.xcontent.json.JsonXContent.jsonXContent;
 import static org.opensearch.core.xcontent.XContentParserUtils.ensureExpectedToken;
 import static org.opensearch.ml.common.CommonValue.ENDPOINT_FIELD;
 import static org.opensearch.ml.common.CommonValue.MCP_CONNECTORS_FIELD;
+import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_PARAM_LOAD_CHAT_HISTORY;
 import static org.opensearch.ml.common.CommonValue.ML_AGENT_INDEX;
 import static org.opensearch.ml.common.CommonValue.ML_TASK_INDEX;
 import static org.opensearch.ml.common.MLTask.RESPONSE_FIELD;
@@ -518,6 +519,27 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
                 ? (List<Message>) agentMLInput.getAgentInput().getInput()
                 : null;
 
+        // For AGUI history-load requests, skip parent interaction creation
+        MLAgentType agentType = MLAgentType.from(mlAgent.getType());
+        if (agentType == MLAgentType.AG_UI && inputMessages == null) {
+            executeAgent(
+                inputDataSet,
+                tenantId,
+                mlTask,
+                isAsync,
+                memory.getId(),
+                mlAgent,
+                outputs,
+                modelTensors,
+                listener,
+                memory,
+                channel,
+                hookRegistry,
+                inputMessages
+            );
+            return;
+        }
+
         createParentInteractionAndExecute(
             tenantId,
             memory,
@@ -941,7 +963,8 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
                     toolFactories,
                     memoryFactoryMap,
                     sdkClient,
-                    encryptor
+                    encryptor,
+                    hookRegistry
                 );
             default:
                 throw new IllegalArgumentException("Unsupported agent type");
@@ -1031,6 +1054,14 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
         // old style agent registration, except AG_UI agent
         if (mlAgent.getModel() == null && agentType != MLAgentType.AG_UI) {
             return;
+        }
+
+        // AGUI history-load: no question extraction needed, MLAGUIAgentRunner handles it
+        if (agentMLInput.getInputDataset() instanceof RemoteInferenceInputDataSet) {
+            RemoteInferenceInputDataSet ds = (RemoteInferenceInputDataSet) agentMLInput.getInputDataset();
+            if (ds.getParameters() != null && "true".equals(ds.getParameters().get(AGUI_PARAM_LOAD_CHAT_HISTORY))) {
+                return;
+            }
         }
 
         if (agentMLInput.getAgentInput() != null

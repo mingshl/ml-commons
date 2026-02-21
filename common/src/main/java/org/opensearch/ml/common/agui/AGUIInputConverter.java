@@ -5,10 +5,14 @@
 
 package org.opensearch.ml.common.agui;
 
+import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_FIELD_ARGUMENTS;
 import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_FIELD_CONTENT;
 import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_FIELD_CONTEXT;
 import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_FIELD_FORWARDED_PROPS;
+import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_FIELD_FUNCTION;
+import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_FIELD_ID;
 import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_FIELD_MESSAGES;
+import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_FIELD_NAME;
 import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_FIELD_ROLE;
 import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_FIELD_RUN_ID;
 import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_FIELD_STATE;
@@ -16,9 +20,10 @@ import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_FIELD_THREAD_ID;
 import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_FIELD_TOOLS;
 import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_FIELD_TOOL_CALLS;
 import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_FIELD_TOOL_CALL_ID;
+import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_FIELD_TYPE;
 import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_PARAM_CONTEXT;
 import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_PARAM_FORWARDED_PROPS;
-import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_PARAM_MESSAGES;
+import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_PARAM_LOAD_CHAT_HISTORY;
 import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_PARAM_RUN_ID;
 import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_PARAM_STATE;
 import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_PARAM_THREAD_ID;
@@ -116,10 +121,6 @@ public class AGUIInputConverter {
                 parameters.put(AGUI_PARAM_STATE, gson.toJson(state));
             }
 
-            if (messages != null) {
-                parameters.put(AGUI_PARAM_MESSAGES, gson.toJson(messages));
-            }
-
             if (tools != null) {
                 parameters.put(AGUI_PARAM_TOOLS, gson.toJson(tools));
             }
@@ -145,9 +146,13 @@ public class AGUIInputConverter {
                     appendContextToLatestUserMessage(agentMessages, context.getAsJsonArray());
                 }
 
-                // Create AgentInput from converted messages
-                AgentInput agentInput = new AgentInput(agentMessages);
-                agentMLInput.setAgentInput(agentInput);
+                if (agentMessages.isEmpty()) {
+                    // Empty messages means "load previous conversation history"
+                    parameters.put(AGUI_PARAM_LOAD_CHAT_HISTORY, "true");
+                } else {
+                    AgentInput agentInput = new AgentInput(agentMessages);
+                    agentMLInput.setAgentInput(agentInput);
+                }
             }
 
             log.debug("Converted AG-UI input to ML-Commons format for agent: {}", agentId);
@@ -332,6 +337,78 @@ public class AGUIInputConverter {
             return mimeType.substring(slashIndex + 1);
         }
         return mimeType;
+    }
+
+    /**
+     * Converts internal Message objects to AGUI-compatible format
+     *
+     * @param messages the list of internal Message objects
+     * @return list of maps in AGUI message format
+     */
+    public static List<Map<String, Object>> convertToAGUIFormat(List<Message> messages) {
+        List<Map<String, Object>> aguiMessages = new ArrayList<>();
+        if (messages == null) {
+            return aguiMessages;
+        }
+
+        for (Message message : messages) {
+            Map<String, Object> aguiMsg = new HashMap<>();
+            aguiMsg.put(AGUI_FIELD_ROLE, message.getRole());
+
+            // Convert content blocks
+            List<ContentBlock> contentBlocks = message.getContent();
+            if (contentBlocks != null && !contentBlocks.isEmpty()) {
+                if (contentBlocks.size() == 1 && contentBlocks.get(0).getType() == ContentType.TEXT) {
+                    // Single text block → string form
+                    aguiMsg.put(AGUI_FIELD_CONTENT, contentBlocks.get(0).getText());
+                } else {
+                    // Multiple/multimodal blocks → array form
+                    List<Map<String, Object>> contentArray = new ArrayList<>();
+                    for (ContentBlock block : contentBlocks) {
+                        Map<String, Object> contentMap = new HashMap<>();
+                        if (block.getType() == ContentType.TEXT) {
+                            contentMap.put("type", "text");
+                            contentMap.put("text", block.getText());
+                        } else if (block.getType() == ContentType.IMAGE && block.getImage() != null) {
+                            contentMap.put("type", "binary");
+                            contentMap.put("mimeType", "image/" + block.getImage().getFormat());
+                            contentMap.put("data", block.getImage().getData());
+                        }
+                        if (!contentMap.isEmpty()) {
+                            contentArray.add(contentMap);
+                        }
+                    }
+                    aguiMsg.put(AGUI_FIELD_CONTENT, contentArray);
+                }
+            }
+
+            // Preserve tool calls for assistant messages
+            if (message.getToolCalls() != null && !message.getToolCalls().isEmpty()) {
+                List<Map<String, Object>> toolCallsList = new ArrayList<>();
+                for (ToolCall toolCall : message.getToolCalls()) {
+                    Map<String, Object> toolCallMap = new HashMap<>();
+                    toolCallMap.put(AGUI_FIELD_ID, toolCall.getId());
+                    toolCallMap.put(AGUI_FIELD_TYPE, toolCall.getType());
+                    if (toolCall.getFunction() != null) {
+                        Map<String, String> functionMap = new HashMap<>();
+                        functionMap.put(AGUI_FIELD_NAME, toolCall.getFunction().getName());
+                        functionMap.put(AGUI_FIELD_ARGUMENTS, toolCall.getFunction().getArguments());
+                        toolCallMap.put(AGUI_FIELD_FUNCTION, functionMap);
+                    }
+                    toolCallsList.add(toolCallMap);
+                }
+                aguiMsg.put(AGUI_FIELD_TOOL_CALLS, toolCallsList);
+            }
+
+            // Preserve tool call ID for tool result messages
+            if (message.getToolCallId() != null) {
+                aguiMsg.put(AGUI_FIELD_TOOL_CALL_ID, message.getToolCallId());
+            }
+
+            aguiMessages.add(aguiMsg);
+        }
+
+        return aguiMessages;
     }
 
     /**
