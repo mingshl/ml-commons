@@ -1649,4 +1649,5 @@ public class MLChatAgentRunnerTest {
         runner.setInputMessages(java.util.Collections.emptyList());
         runner.setInputMessages(null);
     }
+
 }
