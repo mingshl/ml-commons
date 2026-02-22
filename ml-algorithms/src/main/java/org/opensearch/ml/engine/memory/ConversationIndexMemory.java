@@ -164,7 +164,7 @@ public class ConversationIndexMemory implements Memory<org.opensearch.ml.common.
     }
 
     @Override
-    public void saveStructuredMessages(List<Message> messages, ActionListener<Void> listener) {
+    public void saveStructuredMessages(List<Message> messages, Integer startMessageId, ActionListener<Void> listener) {
         if (messages == null || messages.isEmpty()) {
             listener.onResponse(null);
             return;

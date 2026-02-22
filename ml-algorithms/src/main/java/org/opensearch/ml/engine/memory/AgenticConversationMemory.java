@@ -393,7 +393,6 @@ public class AgenticConversationMemory
         SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
         searchSourceBuilder.query(boolQuery);
         searchSourceBuilder.size(Memory.MAX_MESSAGES_TO_RETRIEVE);
-        searchSourceBuilder.sort(CREATED_TIME_FIELD, SortOrder.ASC);
         searchSourceBuilder.sort(MESSAGE_ID_FIELD, SortOrder.ASC);
 
         MLSearchMemoriesInput searchInput = MLSearchMemoriesInput
@@ -426,13 +425,14 @@ public class AgenticConversationMemory
     }
 
     @Override
-    public void saveStructuredMessages(List<Message> messages, ActionListener<Void> listener) {
+    public void saveStructuredMessages(List<Message> messages, Integer startMessageId, ActionListener<Void> listener) {
         log
             .debug(
-                "saveStructuredMessages: Entry - memoryContainerId={}, conversationId={}, messages count={}",
+                "saveStructuredMessages: Entry - memoryContainerId={}, conversationId={}, messages count={}, startMessageId={}",
                 memoryContainerId,
                 conversationId,
-                messages != null ? messages.size() : "null"
+                messages != null ? messages.size() : "null",
+                startMessageId
             );
         if (Strings.isNullOrEmpty(memoryContainerId)) {
             listener.onFailure(new IllegalStateException("Memory container ID is not configured for this AgenticConversationMemory"));
@@ -444,6 +444,57 @@ public class AgenticConversationMemory
             return;
         }
 
+        if (startMessageId != null) {
+            doSaveMessages(messages, startMessageId, listener);
+        } else {
+            getMaxStructuredMessageId(
+                ActionListener.wrap(maxId -> { doSaveMessages(messages, maxId + 1, listener); }, listener::onFailure)
+            );
+        }
+    }
+
+    /**
+     * Query for the current maximum message_id among structured messages for this session.
+     * Returns -1 if no structured messages exist yet.
+     */
+    private void getMaxStructuredMessageId(ActionListener<Integer> listener) {
+        BoolQueryBuilder boolQuery = QueryBuilders.boolQuery();
+        boolQuery.must(QueryBuilders.termQuery("namespace." + SESSION_ID_FIELD, conversationId));
+        boolQuery.must(QueryBuilders.termQuery("metadata.type", "structured_message"));
+
+        SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
+        searchSourceBuilder.query(boolQuery);
+        searchSourceBuilder.size(1);
+        searchSourceBuilder.sort(MESSAGE_ID_FIELD, SortOrder.DESC);
+
+        MLSearchMemoriesInput searchInput = MLSearchMemoriesInput
+            .builder()
+            .memoryContainerId(memoryContainerId)
+            .memoryType(MemoryType.WORKING)
+            .searchSourceBuilder(searchSourceBuilder)
+            .build();
+
+        MLSearchMemoriesRequest request = MLSearchMemoriesRequest.builder().mlSearchMemoriesInput(searchInput).tenantId(null).build();
+
+        client.execute(MLSearchMemoriesAction.INSTANCE, request, ActionListener.wrap(searchResponse -> {
+            int maxId = -1;
+            if (searchResponse.getHits() != null && searchResponse.getHits().getHits().length > 0) {
+                Object msgIdObj = searchResponse.getHits().getHits()[0].getSourceAsMap().get(MESSAGE_ID_FIELD);
+                if (msgIdObj instanceof Number) {
+                    maxId = ((Number) msgIdObj).intValue();
+                }
+            }
+            listener.onResponse(maxId);
+        }, e -> {
+            log.error("Failed to query max structured message id", e);
+            listener.onFailure(e);
+        }));
+    }
+
+    /**
+     * Save messages starting from the given startId, assigning messageId(startId + i) to each.
+     */
+    private void doSaveMessages(List<Message> messages, int startId, ActionListener<Void> listener) {
         AtomicInteger remaining = new AtomicInteger(messages.size());
         AtomicBoolean hasError = new AtomicBoolean(false);
 
@@ -467,13 +518,11 @@ public class AgenticConversationMemory
                 metadata.put("role", message.getRole());
             }
 
-            // Use messageId as sequence number so retrieval can sort by
-            // (created_time ASC, message_id ASC) to preserve ordering.
             MLAddMemoriesInput input = MLAddMemoriesInput
                 .builder()
                 .memoryContainerId(memoryContainerId)
                 .structuredDataBlob(structuredData)
-                .messageId(i)
+                .messageId(startId + i)
                 .namespace(namespace)
                 .metadata(metadata)
                 .infer(false)

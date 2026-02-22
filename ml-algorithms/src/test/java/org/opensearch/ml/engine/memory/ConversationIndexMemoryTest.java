@@ -164,7 +164,7 @@ public class ConversationIndexMemoryTest {
     @Test
     public void saveStructuredMessages_nullMessages() {
         ActionListener<Void> listener = mock(ActionListener.class);
-        indexMemory.saveStructuredMessages(null, listener);
+        indexMemory.saveStructuredMessages(null, null, listener);
         verify(listener).onResponse(null);
         verify(memoryManager, never()).createInteraction(any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
@@ -172,7 +172,7 @@ public class ConversationIndexMemoryTest {
     @Test
     public void saveStructuredMessages_emptyMessages() {
         ActionListener<Void> listener = mock(ActionListener.class);
-        indexMemory.saveStructuredMessages(Collections.emptyList(), listener);
+        indexMemory.saveStructuredMessages(Collections.emptyList(), null, listener);
         verify(listener).onResponse(null);
     }
 
@@ -195,7 +195,7 @@ public class ConversationIndexMemoryTest {
         }).when(memoryManager).createInteraction(any(), any(), any(), any(), any(), any(), any(), any(), any());
 
         ActionListener<Void> listener = mock(ActionListener.class);
-        indexMemory.saveStructuredMessages(Arrays.asList(userMsg, assistantMsg), listener);
+        indexMemory.saveStructuredMessages(Arrays.asList(userMsg, assistantMsg), null, listener);
 
         verify(listener).onResponse(null);
         verify(memoryManager, times(1)).createInteraction(any(), any(), any(), any(), any(), any(), any(), any(), any());
@@ -238,7 +238,7 @@ public class ConversationIndexMemoryTest {
         }).when(memoryManager).createInteraction(any(), any(), any(), any(), any(), any(), any(), any(), any());
 
         ActionListener<Void> listener = mock(ActionListener.class);
-        indexMemory.saveStructuredMessages(messages, listener);
+        indexMemory.saveStructuredMessages(messages, null, listener);
 
         // Should report failure since one pair failed
         verify(listener).onFailure(isA(RuntimeException.class));
@@ -254,7 +254,7 @@ public class ConversationIndexMemoryTest {
         Message userMsg = new Message("user", Collections.singletonList(block));
 
         ActionListener<Void> listener = mock(ActionListener.class);
-        indexMemory.saveStructuredMessages(Collections.singletonList(userMsg), listener);
+        indexMemory.saveStructuredMessages(Collections.singletonList(userMsg), null, listener);
 
         // No pairs extracted (trailing user message), so completes immediately
         verify(listener).onResponse(null);
