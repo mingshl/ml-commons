@@ -783,7 +783,7 @@ public class AgenticConversationMemoryTest {
             // Should complete successfully with null
         }, e -> { throw new RuntimeException("Should not fail", e); });
 
-        agenticMemory.saveStructuredMessages(null, testListener);
+        agenticMemory.saveStructuredMessages(null, null, testListener);
 
         // No API calls should be made
         verify(client, never()).execute(eq(MLAddMemoriesAction.INSTANCE), any(), any());
@@ -795,7 +795,7 @@ public class AgenticConversationMemoryTest {
             // Should complete successfully with empty list
         }, e -> { throw new RuntimeException("Should not fail", e); });
 
-        agenticMemory.saveStructuredMessages(java.util.Collections.emptyList(), testListener);
+        agenticMemory.saveStructuredMessages(java.util.Collections.emptyList(), null, testListener);
 
         verify(client, never()).execute(eq(MLAddMemoriesAction.INSTANCE), any(), any());
     }
@@ -821,7 +821,7 @@ public class AgenticConversationMemoryTest {
             // Success
         }, e -> { throw new RuntimeException("Should not fail", e); });
 
-        agenticMemory.saveStructuredMessages(java.util.Collections.singletonList(message), testListener);
+        agenticMemory.saveStructuredMessages(java.util.Collections.singletonList(message), 0, testListener);
 
         // Verify one save call was made
         verify(client, times(1)).execute(eq(MLAddMemoriesAction.INSTANCE), any(), any());
@@ -855,7 +855,7 @@ public class AgenticConversationMemoryTest {
             // Success
         }, e -> { throw new RuntimeException("Should not fail", e); });
 
-        agenticMemory.saveStructuredMessages(java.util.Arrays.asList(msg1, msg2), testListener);
+        agenticMemory.saveStructuredMessages(java.util.Arrays.asList(msg1, msg2), 0, testListener);
 
         // Verify two save calls were made (parallel)
         verify(client, times(2)).execute(eq(MLAddMemoriesAction.INSTANCE), any(), any());
@@ -879,7 +879,7 @@ public class AgenticConversationMemoryTest {
             assertTrue(e.getMessage().contains("Memory container ID is not configured"));
         });
 
-        memoryWithoutContainer.saveStructuredMessages(java.util.Collections.singletonList(message), testListener);
+        memoryWithoutContainer.saveStructuredMessages(java.util.Collections.singletonList(message), 0, testListener);
 
         verify(client, never()).execute(eq(MLAddMemoriesAction.INSTANCE), any(), any());
     }
@@ -921,7 +921,7 @@ public class AgenticConversationMemoryTest {
             assertNotNull(e);
         });
 
-        agenticMemory.saveStructuredMessages(java.util.Arrays.asList(msg1, msg2), testListener);
+        agenticMemory.saveStructuredMessages(java.util.Arrays.asList(msg1, msg2), 0, testListener);
 
         verify(client, times(2)).execute(eq(MLAddMemoriesAction.INSTANCE), any(), any());
     }

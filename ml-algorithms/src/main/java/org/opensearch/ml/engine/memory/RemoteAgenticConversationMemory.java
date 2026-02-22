@@ -535,7 +535,7 @@ public class RemoteAgenticConversationMemory implements Memory<Message, CreateIn
         searchRequest.put("memory_type", "working");
         searchRequest.put("query", query);
         searchRequest.put("size", Memory.MAX_MESSAGES_TO_RETRIEVE);
-        searchRequest.put("sort", List.of(Map.of(CREATED_TIME_FIELD, "asc"), Map.of(MESSAGE_ID_FIELD, "asc")));
+        searchRequest.put("sort", List.of(Map.of(MESSAGE_ID_FIELD, "asc")));
 
         executeConnectorAction("search_memories", searchRequest, ActionListener.wrap(response -> {
             List<org.opensearch.ml.common.input.execute.agent.Message> messages = parseStructuredMessages(response);
@@ -547,7 +547,11 @@ public class RemoteAgenticConversationMemory implements Memory<Message, CreateIn
     }
 
     @Override
-    public void saveStructuredMessages(List<org.opensearch.ml.common.input.execute.agent.Message> messages, ActionListener<Void> listener) {
+    public void saveStructuredMessages(
+        List<org.opensearch.ml.common.input.execute.agent.Message> messages,
+        Integer startMessageId,
+        ActionListener<Void> listener
+    ) {
         if (Strings.isNullOrEmpty(memoryContainerId)) {
             listener.onFailure(new IllegalStateException("Memory container ID is not configured"));
             return;
@@ -558,6 +562,67 @@ public class RemoteAgenticConversationMemory implements Memory<Message, CreateIn
             return;
         }
 
+        if (startMessageId != null) {
+            doSaveMessages(messages, startMessageId, listener);
+        } else {
+            getMaxStructuredMessageId(
+                ActionListener.wrap(maxId -> { doSaveMessages(messages, maxId + 1, listener); }, listener::onFailure)
+            );
+        }
+    }
+
+    /**
+     * Query for the current maximum message_id among structured messages for this session.
+     * Returns -1 if no structured messages exist yet.
+     */
+    private void getMaxStructuredMessageId(ActionListener<Integer> listener) {
+        Map<String, Object> query = new HashMap<>();
+        Map<String, Object> bool = new HashMap<>();
+        List<Map<String, Object>> must = new ArrayList<>();
+
+        must.add(Map.of("term", Map.of("namespace." + SESSION_ID_FIELD, conversationId)));
+        must.add(Map.of("term", Map.of("metadata.type", "structured_message")));
+
+        bool.put("must", must);
+        query.put("bool", bool);
+
+        Map<String, Object> searchRequest = new HashMap<>();
+        searchRequest.put("memory_container_id", memoryContainerId);
+        searchRequest.put("memory_type", "working");
+        searchRequest.put("query", query);
+        searchRequest.put("size", 1);
+        searchRequest.put("sort", List.of(Map.of(MESSAGE_ID_FIELD, "desc")));
+
+        executeConnectorAction("search_memories", searchRequest, ActionListener.wrap(response -> {
+            int maxId = -1;
+            try {
+                SearchResponse searchResponse = parseSearchResponse(response);
+                if (searchResponse.getHits() != null && searchResponse.getHits().getHits().length > 0) {
+                    Object msgIdObj = searchResponse.getHits().getHits()[0].getSourceAsMap().get(MESSAGE_ID_FIELD);
+                    if (msgIdObj instanceof Number) {
+                        maxId = ((Number) msgIdObj).intValue();
+                    }
+                }
+            } catch (Exception e) {
+                log.error("Failed to parse max message id response", e);
+                listener.onFailure(e);
+                return;
+            }
+            listener.onResponse(maxId);
+        }, e -> {
+            log.error("Failed to query max structured message id from remote", e);
+            listener.onFailure(e);
+        }));
+    }
+
+    /**
+     * Save messages starting from the given startId, assigning messageId(startId + i) to each.
+     */
+    private void doSaveMessages(
+        List<org.opensearch.ml.common.input.execute.agent.Message> messages,
+        int startId,
+        ActionListener<Void> listener
+    ) {
         AtomicInteger remaining = new AtomicInteger(messages.size());
         AtomicBoolean hasError = new AtomicBoolean(false);
 
@@ -588,7 +653,7 @@ public class RemoteAgenticConversationMemory implements Memory<Message, CreateIn
             Map<String, Object> requestBody = new HashMap<>();
             requestBody.put("memory_container_id", memoryContainerId);
             requestBody.put("structured_data_blob", structuredData);
-            requestBody.put("message_id", i);
+            requestBody.put("message_id", startId + i);
             requestBody.put("namespace", namespace);
             requestBody.put("metadata", metadata);
             requestBody.put("infer", false);

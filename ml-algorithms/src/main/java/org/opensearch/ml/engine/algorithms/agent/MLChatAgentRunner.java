@@ -165,6 +165,7 @@ public class MLChatAgentRunner implements MLAgentRunner {
     private StreamingWrapper streamingWrapper;
     private HookRegistry hookRegistry;
     private List<Message> inputMessages;
+    private int nextStructuredMessageId;
 
     public MLChatAgentRunner(
         Client client,
@@ -275,13 +276,16 @@ public class MLChatAgentRunner implements MLAgentRunner {
             if (usesUnifiedInterface) {
                 // Get history first, then save new input messages
                 memory.getStructuredMessages(ActionListener.wrap(allMessages -> {
+                    this.nextStructuredMessageId = allMessages.size();
+
                     // Apply history limit
                     List<Message> history = messageHistoryLimit > 0 && allMessages.size() > messageHistoryLimit
                         ? allMessages.subList(allMessages.size() - messageHistoryLimit, allMessages.size())
                         : allMessages;
 
                     // Save input messages
-                    memory.saveStructuredMessages(inputMessages, ActionListener.wrap(v -> {
+                    memory.saveStructuredMessages(inputMessages, nextStructuredMessageId, ActionListener.wrap(v -> {
+                        this.nextStructuredMessageId += inputMessages != null ? inputMessages.size() : 0;
                         if (!history.isEmpty()) {
                             // Format history messages using the model provider for API-compatible output
                             ModelProvider modelProvider = ModelProviderFactory.getProvider(mlAgent.getModel().getModelProvider());
@@ -1080,7 +1084,10 @@ public class MLChatAgentRunner implements MLAgentRunner {
         assistantMessages.add(assistantMessage);
 
         // Save assistant response messages (tool interactions + final answer)
-        memory.saveStructuredMessages(assistantMessages, ActionListener.wrap(v -> listener.onResponse(null), listener::onFailure));
+        memory.saveStructuredMessages(assistantMessages, nextStructuredMessageId, ActionListener.wrap(v -> {
+            this.nextStructuredMessageId += assistantMessages.size();
+            listener.onResponse(null);
+        }, listener::onFailure));
     }
 
     public static List<ModelTensors> createModelTensors(String sessionId, String parentInteractionId) {
