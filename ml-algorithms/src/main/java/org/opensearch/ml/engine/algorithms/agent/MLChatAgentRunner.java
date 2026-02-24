@@ -263,9 +263,8 @@ public class MLChatAgentRunner implements MLAgentRunner {
         memoryFactory.create(memoryParams, ActionListener.wrap(memory -> {
             // TODO: call runAgent directly if messageHistoryLimit == 0
 
-            // Check if agent uses unified interface (has model field)
             // Unified interface agents store and retrieve structured messages with function calling
-            boolean usesUnifiedInterface = mlAgent.getModel() != null;
+            boolean usesUnifiedInterface = Boolean.parseBoolean(params.getOrDefault(MLAgentExecutor.USES_UNIFIED_INTERFACE, "false"));
 
             if (usesUnifiedInterface) {
                 // Get history first, then save new input messages
@@ -429,7 +428,7 @@ public class MLChatAgentRunner implements MLAgentRunner {
         LLMSpec llm = mlAgent.getLlm();
         String tenantId = mlAgent.getTenantId();
         String sessionId = memory != null ? memory.getId() : null;
-        boolean usesUnifiedInterface = mlAgent.getModel() != null;
+        boolean usesUnifiedInterface = Boolean.parseBoolean(parameters.getOrDefault(MLAgentExecutor.USES_UNIFIED_INTERFACE, "false"));
         ModelProvider modelProvider = usesUnifiedInterface ? ModelProviderFactory.getProvider(mlAgent.getModel().getModelProvider()) : null;
 
         Map<String, String> tmpParameters = constructLLMParams(llm, parameters);
@@ -901,7 +900,7 @@ public class MLChatAgentRunner implements MLAgentRunner {
      */
     private static void updateParametersAcrossTools(Map<String, String> tmpParameters, Map<String, String> llmToolTmpParameters) {
         // update the tmpParameters if the tool run produce new scratch pad
-        if (llmToolTmpParameters.containsKey(SCRATCHPAD_NOTES_KEY) && llmToolTmpParameters.get(SCRATCHPAD_NOTES_KEY) != "[]") {
+        if (llmToolTmpParameters.containsKey(SCRATCHPAD_NOTES_KEY) && !"[]".equals(llmToolTmpParameters.get(SCRATCHPAD_NOTES_KEY))) {
             tmpParameters.put(SCRATCHPAD_NOTES_KEY, llmToolTmpParameters.getOrDefault(SCRATCHPAD_NOTES_KEY, "[]"));
         }
     }
@@ -1049,7 +1048,7 @@ public class MLChatAgentRunner implements MLAgentRunner {
         if (toolInteractions != null && !toolInteractions.isEmpty()) {
             for (String interactionJson : toolInteractions) {
                 try {
-                    Message msg = modelProvider.parseResponseMessage(interactionJson);
+                    Message msg = modelProvider.parseToUnifiedMessage(interactionJson);
                     if (msg != null) {
                         assistantMessages.add(msg);
                     }

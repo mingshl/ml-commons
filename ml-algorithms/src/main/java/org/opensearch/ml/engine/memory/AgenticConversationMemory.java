@@ -495,6 +495,11 @@ public class AgenticConversationMemory
      * Save messages starting from the given startId, assigning messageId(startId + i) to each.
      */
     private void doSaveMessages(List<Message> messages, int startId, ActionListener<Void> listener) {
+        if (messages == null || messages.isEmpty()) {
+            listener.onResponse(null);
+            return;
+        }
+
         AtomicInteger remaining = new AtomicInteger(messages.size());
         AtomicBoolean hasError = new AtomicBoolean(false);
 

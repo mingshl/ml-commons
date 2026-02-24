@@ -623,6 +623,11 @@ public class RemoteAgenticConversationMemory implements Memory<Message, CreateIn
         int startId,
         ActionListener<Void> listener
     ) {
+        if (messages == null || messages.isEmpty()) {
+            listener.onResponse(null);
+            return;
+        }
+
         AtomicInteger remaining = new AtomicInteger(messages.size());
         AtomicBoolean hasError = new AtomicBoolean(false);
 
@@ -697,6 +702,7 @@ public class RemoteAgenticConversationMemory implements Memory<Message, CreateIn
             }
         } catch (Exception e) {
             log.error("Failed to parse structured messages response", e);
+            throw new RuntimeException("Failed to parse structured messages response", e);
         }
         return messages;
     }
