@@ -1001,12 +1001,12 @@ public class BedrockConverseModelProviderTest {
         assertTrue(body.contains("search"));
     }
 
-    // ==================== Tests for parseResponseMessage ====================
+    // ==================== Tests for parseToUnifiedMessage ====================
 
     @Test
     public void testParseResponseMessage_TextContent() {
         String json = "{\"role\":\"assistant\",\"content\":[{\"text\":\"Hello world\"}]}";
-        Message result = provider.parseResponseMessage(json);
+        Message result = provider.parseToUnifiedMessage(json);
 
         assertNotNull(result);
         assertEquals("assistant", result.getRole());
@@ -1021,7 +1021,7 @@ public class BedrockConverseModelProviderTest {
     public void testParseResponseMessage_ToolUse() {
         String json =
             "{\"role\":\"assistant\",\"content\":[{\"toolUse\":{\"toolUseId\":\"tc_1\",\"name\":\"search\",\"input\":{\"query\":\"test\"}}}]}";
-        Message result = provider.parseResponseMessage(json);
+        Message result = provider.parseToUnifiedMessage(json);
 
         assertNotNull(result);
         assertEquals("assistant", result.getRole());
@@ -1039,7 +1039,7 @@ public class BedrockConverseModelProviderTest {
             + "{\"text\":\"Let me search\"},"
             + "{\"toolUse\":{\"toolUseId\":\"tc_2\",\"name\":\"lookup\",\"input\":{}}}"
             + "]}";
-        Message result = provider.parseResponseMessage(json);
+        Message result = provider.parseToUnifiedMessage(json);
 
         assertNotNull(result);
         assertEquals(1, result.getContent().size());
@@ -1052,7 +1052,7 @@ public class BedrockConverseModelProviderTest {
     public void testParseResponseMessage_ToolResult() {
         String json =
             "{\"role\":\"user\",\"content\":[{\"toolResult\":{\"toolUseId\":\"tc_1\",\"content\":[{\"text\":\"Result data\"}]}}]}";
-        Message result = provider.parseResponseMessage(json);
+        Message result = provider.parseToUnifiedMessage(json);
 
         assertNotNull(result);
         assertEquals("tool", result.getRole()); // Bedrock user+toolResult mapped to "tool"
@@ -1065,7 +1065,7 @@ public class BedrockConverseModelProviderTest {
     public void testParseResponseMessage_NullJson() {
         // fromJson throws on null
         try {
-            provider.parseResponseMessage(null);
+            provider.parseToUnifiedMessage(null);
             fail("Expected exception");
         } catch (IllegalArgumentException e) {
             // expected
@@ -1075,7 +1075,7 @@ public class BedrockConverseModelProviderTest {
     @Test
     public void testParseResponseMessage_EmptyContent() {
         String json = "{\"role\":\"assistant\",\"content\":[]}";
-        Message result = provider.parseResponseMessage(json);
+        Message result = provider.parseToUnifiedMessage(json);
         assertNull(result);
     }
 
@@ -1083,7 +1083,7 @@ public class BedrockConverseModelProviderTest {
     public void testParseResponseMessage_NoTextOrTools() {
         // Content with only unknown keys
         String json = "{\"role\":\"assistant\",\"content\":[{\"unknown\":\"value\"}]}";
-        Message result = provider.parseResponseMessage(json);
+        Message result = provider.parseToUnifiedMessage(json);
         assertNull(result);
     }
 }

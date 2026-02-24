@@ -1317,6 +1317,10 @@ public class AgentUtils {
      * @return A list of ConversationIndexMessage pairs in chronological order
      */
     public static List<ConversationIndexMessage> extractMessagePairs(List<Message> messages, String sessionId, String appType) {
+        if (messages == null || messages.isEmpty()) {
+            return Collections.emptyList();
+        }
+
         List<ConversationIndexMessage> messagePairs = new ArrayList<>();
 
         StringBuilder userTextBuilder = new StringBuilder();

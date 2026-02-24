@@ -409,9 +409,31 @@ public class BedrockConverseModelProvider extends ModelProvider {
         };
     }
 
+    /**
+     * Parses a Bedrock Converse response message into a unified Message object.
+     * Handles three content item types within the "content" array:
+     *
+     * 1. Text response:
+     *    {"role": "assistant", "content": [{"text": "Here is the result..."}]}
+     *
+     * 2. Tool call request:
+     *    {"role": "assistant", "content": [
+     *      {"toolUse": {"toolUseId": "tool_abc123", "name": "get_weather",
+     *       "input": {"location": "Seattle"}}}
+     *    ]}
+     *
+     * 3. Tool result (stored as role=user by Bedrock, mapped to role=tool for unified format):
+     *    {"role": "user", "content": [
+     *      {"toolResult": {"toolUseId": "tool_abc123",
+     *       "content": [{"text": "72°F, sunny"}]}}
+     *    ]}
+     *
+     * @param json JSON string containing the Bedrock Converse response message
+     * @return a unified Message object, or null if the input cannot be parsed
+     */
     @SuppressWarnings("unchecked")
     @Override
-    public Message parseResponseMessage(String json) {
+    public Message parseToUnifiedMessage(String json) {
         Map<String, Object> parsed = StringUtils.fromJson(json, "response");
         if (parsed == null) {
             return null;

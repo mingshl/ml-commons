@@ -120,6 +120,7 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
     public static final String MESSAGE_HISTORY_LIMIT = "message_history_limit";
     public static final String ERROR_MESSAGE = "error_message";
     public static final String CONTEXT_MANAGEMENT_PROCESSED = "context_management_processed";
+    public static final String USES_UNIFIED_INTERFACE = "uses_unified_interface";
 
     private Client client;
     private SdkClient sdkClient;
@@ -1116,6 +1117,7 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
 
             // For agent with revamped interface, use ModelProvider to map the entire AgentInput
             if (mlAgent.getModel() != null) {
+                remoteDataSet.getParameters().put(USES_UNIFIED_INTERFACE, "true");
                 ModelProvider modelProvider = ModelProviderFactory.getProvider(mlAgent.getModel().getModelProvider());
                 Map<String, String> parameters = modelProvider.mapAgentInput(agentMLInput.getAgentInput(), agentType);
 

@@ -80,7 +80,7 @@ public abstract class ModelProvider {
      * @param json JSON string in the provider's native message format
      * @return a Message with content blocks
      */
-    public abstract Message parseResponseMessage(String json);
+    public abstract Message parseToUnifiedMessage(String json);
 
     /**
      * Maps standardized AgentInput to provider-specific request body parameters.

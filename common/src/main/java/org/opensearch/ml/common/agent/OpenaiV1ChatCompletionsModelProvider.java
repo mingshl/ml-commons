@@ -353,9 +353,28 @@ public class OpenaiV1ChatCompletionsModelProvider extends ModelProvider {
         };
     }
 
+    /**
+     * Parses an OpenAI chat completions response message into a unified Message object.
+     * Handles three message types:
+     *
+     * 1. Assistant text response:
+     *    {"role": "assistant", "content": "Here is the result..."}
+     *
+     * 2. Assistant tool call request:
+     *    {"role": "assistant", "content": null, "tool_calls": [
+     *      {"id": "call_abc123", "type": "function",
+     *       "function": {"name": "get_weather", "arguments": "{\"location\":\"Seattle\"}"}}
+     *    ]}
+     *
+     * 3. Tool result message:
+     *    {"role": "tool", "tool_call_id": "call_abc123", "content": "72°F, sunny"}
+     *
+     * @param json JSON string containing the OpenAI response message
+     * @return a unified Message object, or null if the input cannot be parsed
+     */
     @SuppressWarnings("unchecked")
     @Override
-    public Message parseResponseMessage(String json) {
+    public Message parseToUnifiedMessage(String json) {
         Map<String, Object> parsed = StringUtils.fromJson(json, "response");
         if (parsed == null) {
             return null;

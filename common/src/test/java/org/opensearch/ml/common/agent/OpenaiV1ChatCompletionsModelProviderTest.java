@@ -1102,12 +1102,12 @@ public class OpenaiV1ChatCompletionsModelProviderTest {
         assertTrue(body.contains("\"name\":\"get_weather\""));
     }
 
-    // ==================== Tests for parseResponseMessage ====================
+    // ==================== Tests for parseToUnifiedMessage ====================
 
     @Test
     public void testParseResponseMessage_TextContent() {
         String json = "{\"role\":\"assistant\",\"content\":\"Hello world\"}";
-        Message result = provider.parseResponseMessage(json);
+        Message result = provider.parseToUnifiedMessage(json);
 
         assertNotNull(result);
         assertEquals("assistant", result.getRole());
@@ -1122,7 +1122,7 @@ public class OpenaiV1ChatCompletionsModelProviderTest {
     public void testParseResponseMessage_ToolCalls() {
         String json = "{\"role\":\"assistant\",\"content\":null,\"tool_calls\":["
             + "{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"search\",\"arguments\":\"{\\\"q\\\":\\\"test\\\"}\"}}]}";
-        Message result = provider.parseResponseMessage(json);
+        Message result = provider.parseToUnifiedMessage(json);
 
         assertNotNull(result);
         assertEquals("assistant", result.getRole());
@@ -1138,7 +1138,7 @@ public class OpenaiV1ChatCompletionsModelProviderTest {
     public void testParseResponseMessage_TextAndToolCalls() {
         String json = "{\"role\":\"assistant\",\"content\":\"Let me check\",\"tool_calls\":["
             + "{\"id\":\"call_2\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{}\"}}]}";
-        Message result = provider.parseResponseMessage(json);
+        Message result = provider.parseToUnifiedMessage(json);
 
         assertNotNull(result);
         assertEquals(1, result.getContent().size());
@@ -1150,7 +1150,7 @@ public class OpenaiV1ChatCompletionsModelProviderTest {
     @Test
     public void testParseResponseMessage_ToolResult() {
         String json = "{\"role\":\"tool\",\"content\":\"Result data\",\"tool_call_id\":\"call_1\"}";
-        Message result = provider.parseResponseMessage(json);
+        Message result = provider.parseToUnifiedMessage(json);
 
         assertNotNull(result);
         assertEquals("tool", result.getRole());
@@ -1163,14 +1163,14 @@ public class OpenaiV1ChatCompletionsModelProviderTest {
     public void testParseResponseMessage_NullContent() {
         // OpenAI can return null content with no tool_calls — should return null
         String json = "{\"role\":\"assistant\",\"content\":null}";
-        Message result = provider.parseResponseMessage(json);
+        Message result = provider.parseToUnifiedMessage(json);
         assertNull(result);
     }
 
     @Test
     public void testParseResponseMessage_EmptyContent() {
         String json = "{\"role\":\"assistant\",\"content\":\"\"}";
-        Message result = provider.parseResponseMessage(json);
+        Message result = provider.parseToUnifiedMessage(json);
         assertNull(result); // empty string content treated as empty
     }
 
@@ -1178,7 +1178,7 @@ public class OpenaiV1ChatCompletionsModelProviderTest {
     public void testParseResponseMessage_DefaultRole() {
         // No role specified — should default to "assistant"
         String json = "{\"content\":\"Hello\"}";
-        Message result = provider.parseResponseMessage(json);
+        Message result = provider.parseToUnifiedMessage(json);
         assertNotNull(result);
         assertEquals("assistant", result.getRole());
     }
