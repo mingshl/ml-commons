@@ -716,9 +716,43 @@ public class AgenticConversationMemory
                     listener.onFailure(e);
                 }));
             } else {
-                // Use existing session/memory ID
-                create(memoryId, memoryContainerId, listener);
+                // Ensure session document exists in sessions index, then use existing memory ID
+                ensureSessionExists(
+                    name,
+                    memoryId,
+                    memoryContainerId,
+                    ActionListener.wrap(sessionId -> create(memoryId, memoryContainerId, listener), e -> {
+                        log.warn("Failed to ensure session exists for id {}, proceeding without session document", memoryId, e);
+                        create(memoryId, memoryContainerId, listener);
+                    })
+                );
             }
+        }
+
+        /**
+         * Ensure a session document exists in the sessions index for the given sessionId.
+         * Uses TransportCreateSessionAction with the specified sessionId; the transport action
+         * uses OpType.CREATE so an existing session is not overwritten.
+         */
+        private void ensureSessionExists(String summary, String sessionId, String memoryContainerId, ActionListener<String> listener) {
+            MLCreateSessionInput input = MLCreateSessionInput
+                .builder()
+                .memoryContainerId(memoryContainerId)
+                .sessionId(sessionId)
+                .summary(summary)
+                .build();
+
+            MLCreateSessionRequest request = MLCreateSessionRequest.builder().mlCreateSessionInput(input).build();
+
+            client
+                .execute(
+                    MLCreateSessionAction.INSTANCE,
+                    request,
+                    ActionListener.wrap(response -> listener.onResponse(response.getSessionId()), e -> {
+                        log.error("Failed to ensure session exists via TransportCreateSessionAction", e);
+                        listener.onFailure(e);
+                    })
+                );
         }
 
         /**
