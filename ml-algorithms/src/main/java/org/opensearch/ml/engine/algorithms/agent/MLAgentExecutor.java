@@ -432,8 +432,7 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
                                                                         listener,
                                                                         createdMemory,
                                                                         channel,
-                                                                        hookRegistry,
-                                                                        null
+                                                                        hookRegistry
                                                                     ),
                                                                     ex -> {
                                                                         log.error("Failed to find memory with memory_id: {}", memoryId, ex);
@@ -456,8 +455,7 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
                                                 listener,
                                                 null,
                                                 channel,
-                                                hookRegistry,
-                                                null
+                                                hookRegistry
                                             );
                                         }
                                     } catch (Exception e) {
@@ -534,29 +532,59 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
                 listener,
                 memory,
                 channel,
-                hookRegistry,
-                inputMessages
+                hookRegistry
             );
             return;
         }
 
-        createParentInteractionAndExecute(
-            tenantId,
-            memory,
-            appType,
-            question,
-            regenerateInteractionId,
-            inputDataSet,
-            mlTask,
-            isAsync,
-            mlAgent,
-            outputs,
-            modelTensors,
-            listener,
-            channel,
-            hookRegistry,
-            inputMessages
-        );
+        if (inputMessages != null && !inputMessages.isEmpty()) {
+            // Save structured messages before creating parent interaction
+            memory
+                .saveStructuredMessages(
+                    inputMessages,
+                    null,
+                    ActionListener
+                        .wrap(
+                            v -> createParentInteractionAndExecute(
+                                tenantId,
+                                memory,
+                                appType,
+                                question,
+                                regenerateInteractionId,
+                                inputDataSet,
+                                mlTask,
+                                isAsync,
+                                mlAgent,
+                                outputs,
+                                modelTensors,
+                                listener,
+                                channel,
+                                hookRegistry
+                            ),
+                            ex -> {
+                                log.error("Failed to save structured messages", ex);
+                                listener.onFailure(ex);
+                            }
+                        )
+                );
+        } else {
+            createParentInteractionAndExecute(
+                tenantId,
+                memory,
+                appType,
+                question,
+                regenerateInteractionId,
+                inputDataSet,
+                mlTask,
+                isAsync,
+                mlAgent,
+                outputs,
+                modelTensors,
+                listener,
+                channel,
+                hookRegistry
+            );
+        }
     }
 
     /**
@@ -576,8 +604,7 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
         List<ModelTensor> modelTensors,
         ActionListener<Output> listener,
         TransportChannel channel,
-        HookRegistry hookRegistry,
-        List<Message> inputMessages
+        HookRegistry hookRegistry
     ) {
         // Create root interaction ID for the current question
         ConversationIndexMessage msg = ConversationIndexMessage
@@ -610,8 +637,7 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
                                     listener,
                                     memory,
                                     channel,
-                                    hookRegistry,
-                                    inputMessages
+                                    hookRegistry
                                 ),
                                 e -> {
                                     log.error("Failed to regenerate for interaction {}", regenerateInteractionId, e);
@@ -632,8 +658,7 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
                     listener,
                     memory,
                     channel,
-                    hookRegistry,
-                    inputMessages
+                    hookRegistry
                 );
             }
         }, ex -> {
@@ -741,8 +766,7 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
         ActionListener<Output> listener,
         Memory memory,
         TransportChannel channel,
-        HookRegistry hookRegistry,
-        List<Message> inputMessages
+        HookRegistry hookRegistry
     ) {
         String mcpConnectorConfigJSON = (mlAgent.getParameters() != null) ? mlAgent.getParameters().get(MCP_CONNECTORS_FIELD) : null;
         if (mcpConnectorConfigJSON != null && !mlFeatureEnabledSetting.isMcpConnectorEnabled()) {
@@ -758,7 +782,6 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
         }
 
         MLAgentRunner mlAgentRunner = getAgentRunner(mlAgent, hookRegistry);
-        mlAgentRunner.setInputMessages(inputMessages);
         String parentInteractionId = inputDataSet.getParameters().get(PARENT_INTERACTION_ID);
 
         // If async is true, index ML task and return the taskID. Also add memoryID to
