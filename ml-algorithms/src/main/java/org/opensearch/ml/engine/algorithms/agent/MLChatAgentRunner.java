@@ -164,7 +164,6 @@ public class MLChatAgentRunner implements MLAgentRunner {
     private Encryptor encryptor;
     private StreamingWrapper streamingWrapper;
     private HookRegistry hookRegistry;
-    private List<Message> inputMessages;
     private int nextStructuredMessageId;
 
     public MLChatAgentRunner(
@@ -200,11 +199,6 @@ public class MLChatAgentRunner implements MLAgentRunner {
         this.sdkClient = sdkClient;
         this.encryptor = encryptor;
         this.hookRegistry = hookRegistry;
-    }
-
-    @Override
-    public void setInputMessages(List<Message> inputMessages) {
-        this.inputMessages = inputMessages;
     }
 
     @Override
@@ -283,24 +277,17 @@ public class MLChatAgentRunner implements MLAgentRunner {
                         ? allMessages.subList(allMessages.size() - messageHistoryLimit, allMessages.size())
                         : allMessages;
 
-                    // Save input messages
-                    memory.saveStructuredMessages(inputMessages, nextStructuredMessageId, ActionListener.wrap(v -> {
-                        this.nextStructuredMessageId += inputMessages != null ? inputMessages.size() : 0;
-                        if (!history.isEmpty()) {
-                            // Format history messages using the model provider for API-compatible output
-                            ModelProvider modelProvider = ModelProviderFactory.getProvider(mlAgent.getModel().getModelProvider());
-                            MLAgentType agentType = MLAgentType.from(mlAgent.getType());
-                            Map<String, String> historyParams = modelProvider.mapMessages(history, agentType);
-                            String formattedHistory = historyParams.get("body");
-                            if (formattedHistory != null && !formattedHistory.isEmpty()) {
-                                params.put(NEW_CHAT_HISTORY, formattedHistory + ", ");
-                            }
+                    if (!history.isEmpty()) {
+                        // Format history messages using the model provider for API-compatible output
+                        ModelProvider modelProvider = ModelProviderFactory.getProvider(mlAgent.getModel().getModelProvider());
+                        MLAgentType agentType = MLAgentType.from(mlAgent.getType());
+                        Map<String, String> historyParams = modelProvider.mapMessages(history, agentType);
+                        String formattedHistory = historyParams.get("body");
+                        if (formattedHistory != null && !formattedHistory.isEmpty()) {
+                            params.put(NEW_CHAT_HISTORY, formattedHistory + ", ");
                         }
-                        runAgent(mlAgent, params, listener, memory, functionCalling);
-                    }, e -> {
-                        log.error("Failed to save input messages", e);
-                        listener.onFailure(e);
-                    }));
+                    }
+                    runAgent(mlAgent, params, listener, memory, functionCalling);
                 }, e -> {
                     log.error("Failed to get history", e);
                     listener.onFailure(e);
