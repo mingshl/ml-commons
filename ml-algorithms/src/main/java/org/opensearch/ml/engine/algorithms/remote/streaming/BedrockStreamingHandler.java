@@ -376,7 +376,7 @@ public class BedrockStreamingHandler extends BaseStreamingHandler {
                     }
 
                     currentState.set(StreamState.WAITING_FOR_TOOL_RESULT);
-                    listener.onResponse(createToolUseResponse(toolName, toolInput, toolUseId));
+                    listener.onResponse(createToolUseResponse(toolName, toolInput, toolUseId, accumulatedContent));
                 }
                 break;
 
@@ -457,34 +457,24 @@ public class BedrockStreamingHandler extends BaseStreamingHandler {
     private MLTaskResponse createToolUseResponse(
         AtomicReference<String> toolName,
         AtomicReference<Map<String, Object>> toolInput,
-        AtomicReference<String> toolUseId
+        AtomicReference<String> toolUseId,
+        StringBuilder accumulatedContent
     ) {
         // Validate inputs
         if (toolName == null || toolInput == null || toolUseId == null) {
             throw new IllegalArgumentException("Tool references cannot be null");
         }
+
+        // Build content blocks — include accumulated text if the LLM sent text before the tool call
+        List<Map<String, Object>> contentBlocks = new ArrayList<>();
+        String textContent = accumulatedContent != null ? accumulatedContent.toString() : "";
+        if (!textContent.isEmpty()) {
+            contentBlocks.add(Map.of("text", textContent));
+        }
+        contentBlocks.add(Map.of("toolUse", Map.of("name", toolName.get(), "input", toolInput.get(), "toolUseId", toolUseId.get())));
+
         Map<String, Object> wrappedResponse = Map
-            .of(
-                "output",
-                Map
-                    .of(
-                        "message",
-                        Map
-                            .of(
-                                "content",
-                                List
-                                    .of(
-                                        Map
-                                            .of(
-                                                "toolUse",
-                                                Map.of("name", toolName.get(), "input", toolInput.get(), "toolUseId", toolUseId.get())
-                                            )
-                                    )
-                            )
-                    ),
-                "stopReason",
-                "tool_use"
-            );
+            .of("output", Map.of("message", Map.of("content", contentBlocks)), "stopReason", "tool_use");
 
         ModelTensor tensor = ModelTensor.builder().name("response").dataAsMap(wrappedResponse).build();
         ModelTensors tensors = ModelTensors.builder().mlModelTensors(List.of(tensor)).build();
