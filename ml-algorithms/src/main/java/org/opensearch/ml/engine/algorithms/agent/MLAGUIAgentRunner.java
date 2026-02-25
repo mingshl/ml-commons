@@ -47,6 +47,7 @@ public class MLAGUIAgentRunner implements MLAgentRunner {
     private final SdkClient sdkClient;
     private final Encryptor encryptor;
     private final HookRegistry hookRegistry;
+    private List<Message> inputMessages;
 
     public MLAGUIAgentRunner(
         Client client,
@@ -84,6 +85,11 @@ public class MLAGUIAgentRunner implements MLAgentRunner {
     }
 
     @Override
+    public void setInputMessages(List<Message> inputMessages) {
+        this.inputMessages = inputMessages;
+    }
+
+    @Override
     public void run(MLAgent mlAgent, Map<String, String> params, ActionListener<Object> listener, TransportChannel channel) {
         try {
             String llmInterface = params.get(LLM_INTERFACE);
@@ -115,6 +121,8 @@ public class MLAGUIAgentRunner implements MLAgentRunner {
                 encryptor,
                 hookRegistry
             );
+            conversationalRunner.setInputMessages(inputMessages);
+
             // Execute with streaming - events are generated in RestMLExecuteStreamAction
             conversationalRunner.run(mlAgent, params, listener, channel);
 
