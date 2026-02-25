@@ -621,7 +621,7 @@ public class AGUIInputConverterTest {
     }
 
     @Test
-    public void testConvertFromAGUIInput_ContextAppendedToLatestUserMessage() {
+    public void testConvertFromAGUIInput_ContextNotEmbeddedInMessages() {
         String aguiInputJson = """
             {
               "threadId": "thread-123",
@@ -641,10 +641,15 @@ public class AGUIInputConverterTest {
         @SuppressWarnings("unchecked")
         List<Message> convertedMessages = (List<Message>) result.getAgentInput().getInput();
         assertEquals(1, convertedMessages.size());
+        // Context should NOT be embedded in the message content (it's applied later at LLM call time)
         String content = convertedMessages.get(0).getContent().get(0).getText();
-        assertTrue(content.contains("Context:"));
-        assertTrue(content.contains("Location: San Francisco"));
-        assertTrue(content.contains("What's the weather?"));
+        assertEquals("What's the weather?", content);
+        assertFalse(content.contains("Context:"));
+        assertFalse(content.contains("Location: San Francisco"));
+
+        // Context should still be stored in params for later use
+        RemoteInferenceInputDataSet dataset = (RemoteInferenceInputDataSet) result.getInputDataset();
+        assertTrue(dataset.getParameters().containsKey(AGUI_PARAM_CONTEXT));
     }
 
     @Test
@@ -879,6 +884,98 @@ public class AGUIInputConverterTest {
         assertEquals("What's 2+2?", roundTripped.get(2).get("content"));
         assertEquals("assistant", roundTripped.get(3).get("role"));
         assertEquals("4", roundTripped.get(3).get("content"));
+    }
+
+    // ==================== Tests for appendContextToLatestUserMessage ====================
+
+    @Test
+    public void testAppendContextToLatestUserMessage_AppendsContext() {
+        ContentBlock textBlock = new ContentBlock();
+        textBlock.setType(ContentType.TEXT);
+        textBlock.setText("What's the weather?");
+        Message userMsg = new Message("user", new ArrayList<>(List.of(textBlock)));
+
+        List<Message> messages = new ArrayList<>(List.of(userMsg));
+
+        JsonArray contextArray = new JsonArray();
+        JsonObject contextItem = new JsonObject();
+        contextItem.addProperty("description", "Location");
+        contextItem.addProperty("value", "San Francisco");
+        contextArray.add(contextItem);
+
+        AGUIInputConverter.appendContextToLatestUserMessage(messages, contextArray);
+
+        String content = messages.get(0).getContent().get(0).getText();
+        assertTrue(content.contains("Context:"));
+        assertTrue(content.contains("Location: San Francisco"));
+        assertTrue(content.contains("What's the weather?"));
+    }
+
+    @Test
+    public void testAppendContextToLatestUserMessage_EmptyMessages() {
+        List<Message> messages = new ArrayList<>();
+        JsonArray contextArray = new JsonArray();
+        JsonObject contextItem = new JsonObject();
+        contextItem.addProperty("description", "Location");
+        contextItem.addProperty("value", "SF");
+        contextArray.add(contextItem);
+
+        // Should not throw
+        AGUIInputConverter.appendContextToLatestUserMessage(messages, contextArray);
+        assertTrue(messages.isEmpty());
+    }
+
+    @Test
+    public void testAppendContextToLatestUserMessage_EmptyContext() {
+        ContentBlock textBlock = new ContentBlock();
+        textBlock.setType(ContentType.TEXT);
+        textBlock.setText("Hello");
+        Message userMsg = new Message("user", new ArrayList<>(List.of(textBlock)));
+        List<Message> messages = new ArrayList<>(List.of(userMsg));
+
+        // Empty context array should not modify the message
+        AGUIInputConverter.appendContextToLatestUserMessage(messages, new JsonArray());
+
+        assertEquals("Hello", messages.get(0).getContent().get(0).getText());
+    }
+
+    // ==================== Tests for message IDs in convertToAGUIFormat ====================
+
+    @Test
+    public void testConvertToAGUIFormat_IncludesMessageId() {
+        ContentBlock textBlock = new ContentBlock();
+        textBlock.setType(ContentType.TEXT);
+        textBlock.setText("Hello");
+        Message message = new Message("user", List.of(textBlock));
+
+        List<Map<String, Object>> result = AGUIInputConverter.convertToAGUIFormat(List.of(message));
+
+        assertEquals(1, result.size());
+        assertNotNull("Each message should have an id", result.get(0).get("id"));
+        assertTrue(result.get(0).get("id") instanceof String);
+        assertFalse(((String) result.get(0).get("id")).isEmpty());
+    }
+
+    @Test
+    public void testConvertToAGUIFormat_UniqueMessageIds() {
+        ContentBlock textBlock1 = new ContentBlock();
+        textBlock1.setType(ContentType.TEXT);
+        textBlock1.setText("Hello");
+        Message msg1 = new Message("user", List.of(textBlock1));
+
+        ContentBlock textBlock2 = new ContentBlock();
+        textBlock2.setType(ContentType.TEXT);
+        textBlock2.setText("Hi");
+        Message msg2 = new Message("assistant", List.of(textBlock2));
+
+        List<Map<String, Object>> result = AGUIInputConverter.convertToAGUIFormat(List.of(msg1, msg2));
+
+        assertEquals(2, result.size());
+        String id1 = (String) result.get(0).get("id");
+        String id2 = (String) result.get(1).get("id");
+        assertNotNull(id1);
+        assertNotNull(id2);
+        assertFalse("Message IDs should be unique", id1.equals(id2));
     }
 
     private String buildMinimalAGUIInput(String threadId, String runId) {
