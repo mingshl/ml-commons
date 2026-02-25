@@ -11,7 +11,6 @@ import static org.opensearch.ml.common.CommonValue.ML_MEMORY_META_INDEX;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.opensearch.action.update.UpdateResponse;
 import org.opensearch.core.action.ActionListener;
@@ -22,7 +21,6 @@ import org.opensearch.ml.common.input.execute.agent.ContentBlock;
 import org.opensearch.ml.common.input.execute.agent.ContentType;
 import org.opensearch.ml.common.input.execute.agent.Message;
 import org.opensearch.ml.common.memory.Memory;
-import org.opensearch.ml.engine.algorithms.agent.AgentUtils;
 import org.opensearch.ml.engine.indices.MLIndicesHandler;
 import org.opensearch.ml.memory.action.conversation.CreateConversationResponse;
 import org.opensearch.ml.memory.action.conversation.CreateInteractionResponse;
@@ -165,11 +163,24 @@ public class ConversationIndexMemory implements Memory<org.opensearch.ml.common.
 
     @Override
     public void saveStructuredMessages(List<Message> messages, Integer startMessageId, ActionListener<Void> listener) {
+        // TODO: Re-enable with proper ordering — saving structured messages before parent interaction
+        // creation is needed to ensure correct create_time ordering, but the current executor/runner
+        // split causes eventual consistency issues (intermittent duplicates).
+        listener
+            .onFailure(
+                new UnsupportedOperationException(
+                    "Messages array input is not supported by ConversationIndexMemory. "
+                        + "Please use AgenticConversationMemory (memory type: 'agentic_memory') "
+                        + "for messages array input support."
+                )
+            );
+
+        /*
         if (messages == null || messages.isEmpty()) {
             listener.onResponse(null);
             return;
         }
-
+        
         // Detect multimodal content and warn
         boolean hasMultimodalContent = false;
         for (Message message : messages) {
@@ -184,7 +195,7 @@ public class ConversationIndexMemory implements Memory<org.opensearch.ml.common.
             if (hasMultimodalContent)
                 break;
         }
-
+        
         if (hasMultimodalContent) {
             log
                 .warn(
@@ -194,18 +205,20 @@ public class ConversationIndexMemory implements Memory<org.opensearch.ml.common.
                     conversationId
                 );
         }
-
+        
         List<ConversationIndexMessage> messagePairs = AgentUtils.extractMessagePairs(messages, conversationId, null);
-
+        
         if (messagePairs.isEmpty()) {
             listener.onResponse(null);
             return;
         }
-
+        
         // Save pairs sequentially, continuing on individual failures
         savePairsSequentially(messagePairs, 0, new AtomicBoolean(false), listener);
+        */
     }
 
+    /*
     private void savePairsSequentially(
         List<ConversationIndexMessage> pairs,
         int index,
@@ -220,7 +233,7 @@ public class ConversationIndexMemory implements Memory<org.opensearch.ml.common.
             }
             return;
         }
-
+    
         save(pairs.get(index), null, null, null, ActionListener.wrap(interaction -> {
             log.info("Stored message pair {} of {} with interaction ID: {}", index + 1, pairs.size(), interaction.getId());
             savePairsSequentially(pairs, index + 1, hasError, finalListener);
@@ -230,6 +243,7 @@ public class ConversationIndexMemory implements Memory<org.opensearch.ml.common.
             savePairsSequentially(pairs, index + 1, hasError, finalListener);
         }));
     }
+    */
 
     @Override
     public void deleteInteractionAndTrace(String interactionId, ActionListener<Boolean> listener) {
