@@ -14,7 +14,9 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.opensearch.ml.common.agent.MLToolSpec;
 import org.opensearch.ml.common.contextmanager.ContextManagerContext;
+import org.opensearch.ml.common.conversation.Interaction;
 import org.opensearch.ml.common.hooks.HookRegistry;
+import org.opensearch.ml.common.hooks.PostMemoryEvent;
 import org.opensearch.ml.common.hooks.PostToolEvent;
 import org.opensearch.ml.common.hooks.PreLLMEvent;
 import org.opensearch.ml.common.memory.Memory;
@@ -156,6 +158,60 @@ public class AgentContextUtil {
 
         } catch (Exception e) {
             log.error("Failed to emit PRE_LLM hook event", e);
+            return context;
+        }
+    }
+
+    public static ContextManagerContext buildContextManagerContextForMemory(
+        Map<String, String> parameters,
+        List<Interaction> retrievedHistory,
+        List<MLToolSpec> toolSpecs,
+        Memory memory
+    ) {
+        ContextManagerContext.ContextManagerContextBuilder builder = ContextManagerContext.builder();
+
+        String systemPrompt = parameters.get(SYSTEM_PROMPT_FIELD);
+        if (systemPrompt != null) {
+            builder.systemPrompt(systemPrompt);
+        }
+
+        String userPrompt = parameters.get(QUESTION);
+        if (userPrompt != null) {
+            builder.userPrompt(userPrompt);
+        }
+
+        builder.chatHistory(retrievedHistory != null ? new ArrayList<>(retrievedHistory) : new ArrayList<>());
+
+        if (toolSpecs != null) {
+            builder.toolConfigs(toolSpecs);
+        }
+
+        Map<String, String> contextParameters = new HashMap<>();
+        contextParameters.putAll(parameters);
+        builder.parameters(contextParameters);
+
+        return builder.build();
+    }
+
+    public static ContextManagerContext emitPostMemoryHook(
+        Map<String, String> parameters,
+        List<Interaction> retrievedHistory,
+        List<MLToolSpec> toolSpecs,
+        Memory memory,
+        HookRegistry hookRegistry
+    ) {
+        ContextManagerContext context = buildContextManagerContextForMemory(parameters, retrievedHistory, toolSpecs, memory);
+
+        if (hookRegistry == null) {
+            return context;
+        }
+
+        try {
+            PostMemoryEvent event = new PostMemoryEvent(context, retrievedHistory, new HashMap<>());
+            hookRegistry.emit(event);
+            return context;
+        } catch (Exception e) {
+            log.error("Failed to emit POST_MEMORY hook event", e);
             return context;
         }
     }
