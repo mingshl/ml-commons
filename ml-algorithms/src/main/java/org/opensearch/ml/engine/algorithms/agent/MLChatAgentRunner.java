@@ -9,6 +9,7 @@ import static org.opensearch.ml.common.CommonValue.ENDPOINT_FIELD;
 import static org.opensearch.ml.common.CommonValue.TENANT_ID_FIELD;
 import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_PARAM_ASSISTANT_TOOL_CALL_MESSAGES;
 import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_PARAM_BACKEND_TOOL_NAMES;
+import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_PARAM_CONTEXT;
 import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_PARAM_FRONTEND_TOOL_NAMES;
 import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_PARAM_TOOLS;
 import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_PARAM_TOOL_CALL_RESULTS;
@@ -76,6 +77,7 @@ import org.opensearch.ml.common.MLMemoryType;
 import org.opensearch.ml.common.agent.LLMSpec;
 import org.opensearch.ml.common.agent.MLAgent;
 import org.opensearch.ml.common.agent.MLToolSpec;
+import org.opensearch.ml.common.agui.AGUIInputConverter;
 import org.opensearch.ml.common.contextmanager.ContextManagerContext;
 import org.opensearch.ml.common.conversation.Interaction;
 import org.opensearch.ml.common.dataset.remote.RemoteInferenceInputDataSet;
@@ -107,6 +109,8 @@ import org.opensearch.transport.TransportChannel;
 import org.opensearch.transport.client.Client;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonParser;
 import com.google.gson.reflect.TypeToken;
 import com.jayway.jsonpath.JsonPath;
 
@@ -286,6 +290,15 @@ public class MLChatAgentRunner implements MLAgentRunner {
                     memory.saveStructuredMessages(inputMessages, nextStructuredMessageId, ActionListener.wrap(v -> {
                         this.nextStructuredMessageId += inputMessages != null ? inputMessages.size() : 0;
                         if (!history.isEmpty()) {
+                            // Append context for the current LLM call (not persisted in memory)
+                            if (isAGUIAgent(params)) {
+                                String contextJson = params.get(AGUI_PARAM_CONTEXT);
+                                if (contextJson != null) {
+                                    JsonArray contextArray = JsonParser.parseString(contextJson).getAsJsonArray();
+                                    AGUIInputConverter.appendContextToLatestUserMessage(history, contextArray);
+                                }
+                            }
+
                             // Format history messages using the model provider for API-compatible output
                             ModelProvider modelProvider = ModelProviderFactory.getProvider(mlAgent.getModel().getModelProvider());
                             MLAgentType agentType = MLAgentType.from(mlAgent.getType());

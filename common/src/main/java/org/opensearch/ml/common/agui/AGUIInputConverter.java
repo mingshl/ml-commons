@@ -34,6 +34,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import org.opensearch.ml.common.FunctionName;
 import org.opensearch.ml.common.dataset.remote.RemoteInferenceInputDataSet;
@@ -140,11 +141,6 @@ public class AGUIInputConverter {
             if (messages != null && messages.isJsonArray()) {
                 JsonArray messagesArray = messages.getAsJsonArray();
                 List<Message> agentMessages = convertAGUIMessages(messagesArray);
-
-                // Append context to the latest user message if context is provided
-                if (context != null && context.isJsonArray()) {
-                    appendContextToLatestUserMessage(agentMessages, context.getAsJsonArray());
-                }
 
                 if (agentMessages.isEmpty()) {
                     // Empty messages means "load previous conversation history"
@@ -353,6 +349,7 @@ public class AGUIInputConverter {
 
         for (Message message : messages) {
             Map<String, Object> aguiMsg = new HashMap<>();
+            aguiMsg.put(AGUI_FIELD_ID, UUID.randomUUID().toString());
             aguiMsg.put(AGUI_FIELD_ROLE, message.getRole());
 
             // Convert content blocks
@@ -418,7 +415,7 @@ public class AGUIInputConverter {
      * @param messages the list of messages to modify
      * @param contextArray the context array from AG-UI input
      */
-    private static void appendContextToLatestUserMessage(List<Message> messages, JsonArray contextArray) {
+    public static void appendContextToLatestUserMessage(List<Message> messages, JsonArray contextArray) {
         if (messages == null || messages.isEmpty() || contextArray == null || contextArray.size() == 0) {
             return;
         }
