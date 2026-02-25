@@ -7,6 +7,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.opensearch.ml.engine.memory.ConversationIndexMemory.APP_TYPE;
 import static org.opensearch.ml.engine.memory.ConversationIndexMemory.MEMORY_ID;
@@ -159,14 +160,12 @@ public class ConversationIndexMemoryTest {
     }
 
     // ==================== Tests for saveStructuredMessages ====================
-    // saveStructuredMessages is disabled for ConversationIndexMemory (see commit 3405ac54f).
-    // All calls should fail with UnsupportedOperationException.
 
     @Test
     public void saveStructuredMessages_nullMessages() {
         ActionListener<Void> listener = mock(ActionListener.class);
         indexMemory.saveStructuredMessages(null, null, listener);
-        verify(listener).onFailure(isA(UnsupportedOperationException.class));
+        verify(listener).onResponse(null);
         verify(memoryManager, never()).createInteraction(any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
@@ -174,11 +173,11 @@ public class ConversationIndexMemoryTest {
     public void saveStructuredMessages_emptyMessages() {
         ActionListener<Void> listener = mock(ActionListener.class);
         indexMemory.saveStructuredMessages(Collections.emptyList(), null, listener);
-        verify(listener).onFailure(isA(UnsupportedOperationException.class));
+        verify(listener).onResponse(null);
     }
 
     @Test
-    public void saveStructuredMessages_singlePair_throwsUnsupported() {
+    public void saveStructuredMessages_singlePair_success() {
         ContentBlock userBlock = new ContentBlock();
         userBlock.setType(ContentType.TEXT);
         userBlock.setText("What is AI?");
@@ -189,34 +188,66 @@ public class ConversationIndexMemoryTest {
         assistantBlock.setText("AI is artificial intelligence.");
         Message assistantMsg = new Message("assistant", Collections.singletonList(assistantBlock));
 
+        doAnswer(invocation -> {
+            ActionListener<CreateInteractionResponse> l = invocation.getArgument(8);
+            l.onResponse(new CreateInteractionResponse("interaction_1"));
+            return null;
+        }).when(memoryManager).createInteraction(any(), any(), any(), any(), any(), any(), any(), any(), any());
+
         ActionListener<Void> listener = mock(ActionListener.class);
         indexMemory.saveStructuredMessages(Arrays.asList(userMsg, assistantMsg), null, listener);
 
-        verify(listener).onFailure(isA(UnsupportedOperationException.class));
-        verify(memoryManager, never()).createInteraction(any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(listener).onResponse(null);
+        verify(memoryManager, times(1)).createInteraction(any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
-    public void saveStructuredMessages_multiplePairs_throwsUnsupported() {
+    public void saveStructuredMessages_continuesOnFailure_reportsError() {
+        // Two user/assistant pairs
         ContentBlock u1 = new ContentBlock();
         u1.setType(ContentType.TEXT);
         u1.setText("Q1");
         ContentBlock a1 = new ContentBlock();
         a1.setType(ContentType.TEXT);
         a1.setText("A1");
+        ContentBlock u2 = new ContentBlock();
+        u2.setType(ContentType.TEXT);
+        u2.setText("Q2");
+        ContentBlock a2 = new ContentBlock();
+        a2.setType(ContentType.TEXT);
+        a2.setText("A2");
 
         List<Message> messages = Arrays
-            .asList(new Message("user", Collections.singletonList(u1)), new Message("assistant", Collections.singletonList(a1)));
+            .asList(
+                new Message("user", Collections.singletonList(u1)),
+                new Message("assistant", Collections.singletonList(a1)),
+                new Message("user", Collections.singletonList(u2)),
+                new Message("assistant", Collections.singletonList(a2))
+            );
+
+        // First save fails, second succeeds
+        java.util.concurrent.atomic.AtomicInteger callCount = new java.util.concurrent.atomic.AtomicInteger(0);
+        doAnswer(invocation -> {
+            ActionListener<CreateInteractionResponse> l = invocation.getArgument(8);
+            if (callCount.getAndIncrement() == 0) {
+                l.onFailure(new RuntimeException("Save failed"));
+            } else {
+                l.onResponse(new CreateInteractionResponse("interaction_2"));
+            }
+            return null;
+        }).when(memoryManager).createInteraction(any(), any(), any(), any(), any(), any(), any(), any(), any());
 
         ActionListener<Void> listener = mock(ActionListener.class);
         indexMemory.saveStructuredMessages(messages, null, listener);
 
-        verify(listener).onFailure(isA(UnsupportedOperationException.class));
-        verify(memoryManager, never()).createInteraction(any(), any(), any(), any(), any(), any(), any(), any(), any());
+        // Should report failure since one pair failed
+        verify(listener).onFailure(isA(RuntimeException.class));
+        // Both saves should have been attempted
+        verify(memoryManager, times(2)).createInteraction(any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
-    public void saveStructuredMessages_onlyUserMessages_throwsUnsupported() {
+    public void saveStructuredMessages_onlyUserMessages_completesImmediately() {
         ContentBlock block = new ContentBlock();
         block.setType(ContentType.TEXT);
         block.setText("Just a question");
@@ -225,7 +256,8 @@ public class ConversationIndexMemoryTest {
         ActionListener<Void> listener = mock(ActionListener.class);
         indexMemory.saveStructuredMessages(Collections.singletonList(userMsg), null, listener);
 
-        verify(listener).onFailure(isA(UnsupportedOperationException.class));
+        // No pairs extracted (trailing user message), so completes immediately
+        verify(listener).onResponse(null);
         verify(memoryManager, never()).createInteraction(any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
