@@ -14,6 +14,7 @@ import org.opensearch.ml.common.contextmanager.ActivationRule;
 import org.opensearch.ml.common.contextmanager.ActivationRuleFactory;
 import org.opensearch.ml.common.contextmanager.ContextManager;
 import org.opensearch.ml.common.contextmanager.ContextManagerContext;
+import org.opensearch.ml.common.conversation.Interaction;
 
 import lombok.extern.log4j.Log4j2;
 
@@ -78,15 +79,15 @@ public class SlidingWindowManager implements ContextManager {
 
     @Override
     public void execute(ContextManagerContext context) {
+        slideToolInteractions(context);
+        slideChatHistory(context);
+    }
+
+    private void slideToolInteractions(ContextManagerContext context) {
         List<String> interactions = context.getToolInteractions();
 
         if (interactions == null || interactions.isEmpty()) {
             log.debug("No tool interactions to process");
-            return;
-        }
-
-        if (interactions.isEmpty()) {
-            log.debug("No string interactions found in tool interactions");
             return;
         }
 
@@ -117,8 +118,38 @@ public class SlidingWindowManager implements ContextManager {
         int removedMessages = originalSize - updatedInteractions.size();
         log
             .info(
-                "Applied sliding window: kept {} most recent interactions, removed {} older interactions",
+                "Applied sliding window: kept {} most recent tool interactions, removed {} older interactions",
                 updatedInteractions.size(),
+                removedMessages
+            );
+    }
+
+    private void slideChatHistory(ContextManagerContext context) {
+        List<Interaction> chatHistory = context.getChatHistory();
+
+        if (chatHistory == null || chatHistory.isEmpty()) {
+            log.debug("No chat history to process");
+            return;
+        }
+
+        int originalSize = chatHistory.size();
+
+        if (originalSize <= maxMessages) {
+            log.debug("Chat history size ({}) is within limit ({}), no truncation needed", originalSize, maxMessages);
+            return;
+        }
+
+        // Keep the most recent interactions
+        int startIndex = originalSize - maxMessages;
+        List<Interaction> updatedHistory = new ArrayList<>(chatHistory.subList(startIndex, originalSize));
+
+        context.setChatHistory(updatedHistory);
+
+        int removedMessages = originalSize - updatedHistory.size();
+        log
+            .info(
+                "Applied sliding window: kept {} most recent chat history interactions, removed {} older interactions",
+                updatedHistory.size(),
                 removedMessages
             );
     }
