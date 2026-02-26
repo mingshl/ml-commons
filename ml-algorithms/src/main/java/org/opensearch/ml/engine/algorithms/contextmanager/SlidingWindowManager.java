@@ -15,6 +15,7 @@ import org.opensearch.ml.common.contextmanager.ActivationRuleFactory;
 import org.opensearch.ml.common.contextmanager.ContextManager;
 import org.opensearch.ml.common.contextmanager.ContextManagerContext;
 import org.opensearch.ml.common.conversation.Interaction;
+import org.opensearch.ml.common.input.execute.agent.Message;
 
 import lombok.extern.log4j.Log4j2;
 
@@ -81,6 +82,7 @@ public class SlidingWindowManager implements ContextManager {
     public void execute(ContextManagerContext context) {
         slideToolInteractions(context);
         slideChatHistory(context);
+        slideStructuredChatHistory(context);
     }
 
     private void slideToolInteractions(ContextManagerContext context) {
@@ -149,6 +151,36 @@ public class SlidingWindowManager implements ContextManager {
         log
             .info(
                 "Applied sliding window: kept {} most recent chat history interactions, removed {} older interactions",
+                updatedHistory.size(),
+                removedMessages
+            );
+    }
+
+    private void slideStructuredChatHistory(ContextManagerContext context) {
+        List<Message> structuredHistory = context.getStructuredChatHistory();
+
+        if (structuredHistory == null || structuredHistory.isEmpty()) {
+            log.debug("No structured chat history to process");
+            return;
+        }
+
+        int originalSize = structuredHistory.size();
+
+        if (originalSize <= maxMessages) {
+            log.debug("Structured chat history size ({}) is within limit ({}), no truncation needed", originalSize, maxMessages);
+            return;
+        }
+
+        // Keep the most recent messages
+        int startIndex = originalSize - maxMessages;
+        List<Message> updatedHistory = new ArrayList<>(structuredHistory.subList(startIndex, originalSize));
+
+        context.setStructuredChatHistory(updatedHistory);
+
+        int removedMessages = originalSize - updatedHistory.size();
+        log
+            .info(
+                "Applied sliding window: kept {} most recent structured messages, removed {} older messages",
                 updatedHistory.size(),
                 removedMessages
             );

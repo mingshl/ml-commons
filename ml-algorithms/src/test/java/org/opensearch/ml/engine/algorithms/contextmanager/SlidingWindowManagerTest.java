@@ -15,6 +15,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.opensearch.ml.common.contextmanager.ContextManagerContext;
 import org.opensearch.ml.common.conversation.Interaction;
+import org.opensearch.ml.common.input.execute.agent.Message;
 
 /**
  * Unit tests for SlidingWindowManager.
@@ -339,6 +340,76 @@ public class SlidingWindowManagerTest {
         Assert.assertEquals(2, context.getChatHistory().size());
         Assert.assertEquals("q-3", context.getChatHistory().get(0).getInput());
         Assert.assertEquals("q-4", context.getChatHistory().get(1).getInput());
+    }
+
+    @Test
+    public void testExecuteSlideStructuredChatHistoryWithSizeOfTwo() {
+        Map<String, Object> config = new HashMap<>();
+        config.put("max_messages", 2);
+        manager.initialize(config);
+
+        List<Message> structuredHistory = new ArrayList<>();
+        for (int i = 1; i <= 5; i++) {
+            structuredHistory.add(new Message("user", null));
+        }
+        // Set identifiable roles to verify ordering
+        structuredHistory.get(0).setRole("msg-1");
+        structuredHistory.get(1).setRole("msg-2");
+        structuredHistory.get(2).setRole("msg-3");
+        structuredHistory.get(3).setRole("msg-4");
+        structuredHistory.get(4).setRole("msg-5");
+        context.setStructuredChatHistory(structuredHistory);
+
+        manager.execute(context);
+
+        // Should keep only the most recent 2 messages
+        Assert.assertEquals(2, context.getStructuredChatHistory().size());
+        Assert.assertEquals("msg-4", context.getStructuredChatHistory().get(0).getRole());
+        Assert.assertEquals("msg-5", context.getStructuredChatHistory().get(1).getRole());
+    }
+
+    @Test
+    public void testExecuteStructuredChatHistoryWithinLimit() {
+        Map<String, Object> config = new HashMap<>();
+        config.put("max_messages", 5);
+        manager.initialize(config);
+
+        List<Message> structuredHistory = new ArrayList<>();
+        for (int i = 1; i <= 3; i++) {
+            structuredHistory.add(new Message("user", null));
+        }
+        context.setStructuredChatHistory(structuredHistory);
+
+        manager.execute(context);
+
+        // All messages should remain unchanged
+        Assert.assertEquals(3, context.getStructuredChatHistory().size());
+    }
+
+    @Test
+    public void testExecuteStructuredChatHistoryEmpty() {
+        Map<String, Object> config = new HashMap<>();
+        config.put("max_messages", 2);
+        manager.initialize(config);
+
+        context.setStructuredChatHistory(new ArrayList<>());
+
+        manager.execute(context);
+
+        Assert.assertTrue(context.getStructuredChatHistory().isEmpty());
+    }
+
+    @Test
+    public void testExecuteStructuredChatHistoryNull() {
+        Map<String, Object> config = new HashMap<>();
+        config.put("max_messages", 2);
+        manager.initialize(config);
+
+        context.setStructuredChatHistory(null);
+
+        manager.execute(context);
+
+        Assert.assertNull(context.getStructuredChatHistory());
     }
 
     /**

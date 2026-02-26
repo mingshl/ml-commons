@@ -13,6 +13,7 @@ import org.opensearch.ml.common.agent.MLToolSpec;
 import org.opensearch.ml.common.contextmanager.ContextManagerContext;
 import org.opensearch.ml.common.conversation.Interaction;
 import org.opensearch.ml.common.hooks.HookRegistry;
+import org.opensearch.ml.common.input.execute.agent.Message;
 import org.opensearch.ml.common.memory.Memory;
 
 public class AgentContextUtilTest {
@@ -160,6 +161,122 @@ public class AgentContextUtilTest {
         assertEquals(2, result.getChatHistory().size());
         assertEquals("hello", result.getChatHistory().get(0).getInput());
         assertEquals("how are you", result.getChatHistory().get(1).getInput());
+        assertEquals(1, result.getToolConfigs().size());
+    }
+
+    @Test
+    public void testEmitPostStructuredMemoryHookWithNullHookRegistry() {
+        Map<String, String> parameters = new HashMap<>();
+        parameters.put("question", "test question");
+
+        List<Message> retrievedHistory = new ArrayList<>();
+        retrievedHistory.add(new Message("user", null));
+        List<MLToolSpec> toolSpecs = new ArrayList<>();
+        Memory memory = mock(Memory.class);
+
+        ContextManagerContext result = AgentContextUtil.emitPostStructuredMemoryHook(
+            parameters, retrievedHistory, toolSpecs, memory, null
+        );
+
+        assertNotNull(result);
+        assertEquals("test question", result.getUserPrompt());
+        assertEquals(1, result.getStructuredChatHistory().size());
+        assertEquals("user", result.getStructuredChatHistory().get(0).getRole());
+    }
+
+    @Test
+    public void testEmitPostStructuredMemoryHookWithValidHookRegistry() {
+        Map<String, String> parameters = new HashMap<>();
+        parameters.put("question", "test question");
+
+        List<Message> retrievedHistory = new ArrayList<>();
+        retrievedHistory.add(new Message("user", null));
+        retrievedHistory.add(new Message("assistant", null));
+        List<MLToolSpec> toolSpecs = new ArrayList<>();
+        Memory memory = mock(Memory.class);
+        HookRegistry hookRegistry = mock(HookRegistry.class);
+
+        ContextManagerContext result = AgentContextUtil.emitPostStructuredMemoryHook(
+            parameters, retrievedHistory, toolSpecs, memory, hookRegistry
+        );
+
+        assertNotNull(result);
+        assertEquals("test question", result.getUserPrompt());
+        assertEquals(2, result.getStructuredChatHistory().size());
+        verify(hookRegistry, times(1)).emit(any());
+    }
+
+    @Test
+    public void testEmitPostStructuredMemoryHookWithEmptyHistory() {
+        Map<String, String> parameters = new HashMap<>();
+        Memory memory = mock(Memory.class);
+        HookRegistry hookRegistry = mock(HookRegistry.class);
+
+        ContextManagerContext result = AgentContextUtil.emitPostStructuredMemoryHook(
+            parameters, new ArrayList<>(), null, memory, hookRegistry
+        );
+
+        assertNotNull(result);
+        assertTrue(result.getStructuredChatHistory().isEmpty());
+        verify(hookRegistry, times(1)).emit(any());
+    }
+
+    @Test
+    public void testEmitPostStructuredMemoryHookWithNullHistory() {
+        Map<String, String> parameters = new HashMap<>();
+        Memory memory = mock(Memory.class);
+        HookRegistry hookRegistry = mock(HookRegistry.class);
+
+        ContextManagerContext result = AgentContextUtil.emitPostStructuredMemoryHook(
+            parameters, null, null, memory, hookRegistry
+        );
+
+        assertNotNull(result);
+        assertTrue(result.getStructuredChatHistory().isEmpty());
+        verify(hookRegistry, times(1)).emit(any());
+    }
+
+    @Test
+    public void testEmitPostStructuredMemoryHookWithException() {
+        Map<String, String> parameters = new HashMap<>();
+        List<Message> retrievedHistory = new ArrayList<>();
+        retrievedHistory.add(new Message("user", null));
+        Memory memory = mock(Memory.class);
+        HookRegistry hookRegistry = mock(HookRegistry.class);
+        doThrow(new RuntimeException("hook error")).when(hookRegistry).emit(any());
+
+        ContextManagerContext result = AgentContextUtil.emitPostStructuredMemoryHook(
+            parameters, retrievedHistory, null, memory, hookRegistry
+        );
+
+        // Should return context without throwing, fallback behavior
+        assertNotNull(result);
+        assertEquals(1, result.getStructuredChatHistory().size());
+    }
+
+    @Test
+    public void testBuildContextManagerContextForStructuredMemory() {
+        Map<String, String> parameters = new HashMap<>();
+        parameters.put("system_prompt", "You are a helpful assistant");
+        parameters.put("question", "What is OpenSearch?");
+
+        List<Message> history = new ArrayList<>();
+        history.add(new Message("user", null));
+        history.add(new Message("assistant", null));
+
+        List<MLToolSpec> toolSpecs = new ArrayList<>();
+        toolSpecs.add(MLToolSpec.builder().name("tool1").type("type1").build());
+
+        ContextManagerContext result = AgentContextUtil.buildContextManagerContextForStructuredMemory(
+            parameters, history, toolSpecs, null
+        );
+
+        assertNotNull(result);
+        assertEquals("You are a helpful assistant", result.getSystemPrompt());
+        assertEquals("What is OpenSearch?", result.getUserPrompt());
+        assertEquals(2, result.getStructuredChatHistory().size());
+        assertEquals("user", result.getStructuredChatHistory().get(0).getRole());
+        assertEquals("assistant", result.getStructuredChatHistory().get(1).getRole());
         assertEquals(1, result.getToolConfigs().size());
     }
 }

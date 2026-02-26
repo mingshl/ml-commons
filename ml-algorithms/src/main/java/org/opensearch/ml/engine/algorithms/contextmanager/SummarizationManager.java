@@ -23,6 +23,9 @@ import org.opensearch.ml.common.contextmanager.ActivationRule;
 import org.opensearch.ml.common.contextmanager.ActivationRuleFactory;
 import org.opensearch.ml.common.contextmanager.ContextManager;
 import org.opensearch.ml.common.contextmanager.ContextManagerContext;
+import org.opensearch.ml.common.input.execute.agent.ContentBlock;
+import org.opensearch.ml.common.input.execute.agent.ContentType;
+import org.opensearch.ml.common.input.execute.agent.Message;
 import org.opensearch.ml.common.dataset.MLInputDataset;
 import org.opensearch.ml.common.dataset.remote.RemoteInferenceInputDataSet;
 import org.opensearch.ml.common.input.MLInput;
@@ -119,14 +122,14 @@ public class SummarizationManager implements ContextManager {
 
     @Override
     public void execute(ContextManagerContext context) {
+        summarizeToolInteractions(context);
+        summarizeStructuredChatHistory(context);
+    }
+
+    private void summarizeToolInteractions(ContextManagerContext context) {
         List<String> interactions = context.getToolInteractions();
 
         if (interactions == null || interactions.isEmpty()) {
-            return;
-        }
-
-        if (interactions.isEmpty()) {
-            log.debug("No string interactions found in tool interactions");
             return;
         }
 
@@ -154,13 +157,7 @@ public class SummarizationManager implements ContextManager {
         List<String> remainingMessages = new ArrayList<>(interactions.subList(safeCutPoint, totalMessages));
 
         // Get model ID
-        String modelId = summarizationModelId;
-        if (modelId == null) {
-            Map<String, String> parameters = context.getParameters();
-            if (parameters != null) {
-                modelId = (String) parameters.get("_llm_model_id");
-            }
-        }
+        String modelId = resolveModelId(context);
 
         if (modelId == null) {
             log.error("No model ID available for summarization");
@@ -173,6 +170,71 @@ public class SummarizationManager implements ContextManager {
         summarizationParameters.put("system_prompt", summarizationSystemPrompt);
 
         executeSummarization(context, modelId, summarizationParameters, safeCutPoint, remainingMessages, interactions);
+    }
+
+    private void summarizeStructuredChatHistory(ContextManagerContext context) {
+        List<Message> structuredHistory = context.getStructuredChatHistory();
+
+        if (structuredHistory == null || structuredHistory.isEmpty()) {
+            return;
+        }
+
+        int totalMessages = structuredHistory.size();
+
+        // Calculate how many messages to summarize
+        int messagesToSummarizeCount = Math.max(1, (int) (totalMessages * summaryRatio));
+
+        // Ensure we don't summarize recent messages
+        messagesToSummarizeCount = min(messagesToSummarizeCount, totalMessages - preserveRecentMessages);
+
+        if (messagesToSummarizeCount <= 0) {
+            return;
+        }
+
+        // Extract text from older messages to summarize
+        List<Message> messagesToSummarize = structuredHistory.subList(0, messagesToSummarizeCount);
+        List<Message> remainingMessages = new ArrayList<>(structuredHistory.subList(messagesToSummarizeCount, totalMessages));
+
+        StringBuilder textToSummarize = new StringBuilder();
+        for (Message message : messagesToSummarize) {
+            if (message.getContent() != null) {
+                for (ContentBlock block : message.getContent()) {
+                    if (block.getText() != null) {
+                        textToSummarize.append(block.getText()).append("\n");
+                    }
+                }
+            }
+        }
+
+        if (textToSummarize.length() == 0) {
+            return;
+        }
+
+        // Get model ID
+        String modelId = resolveModelId(context);
+
+        if (modelId == null) {
+            log.error("No model ID available for structured chat history summarization");
+            return;
+        }
+
+        // Prepare summarization parameters
+        Map<String, String> summarizationParameters = new HashMap<>();
+        summarizationParameters.put("prompt", "Help summarize the following" + StringUtils.toJson(textToSummarize.toString()));
+        summarizationParameters.put("system_prompt", summarizationSystemPrompt);
+
+        executeSummarizationForStructuredHistory(context, modelId, summarizationParameters, remainingMessages);
+    }
+
+    private String resolveModelId(ContextManagerContext context) {
+        String modelId = summarizationModelId;
+        if (modelId == null) {
+            Map<String, String> parameters = context.getParameters();
+            if (parameters != null) {
+                modelId = (String) parameters.get("_llm_model_id");
+            }
+        }
+        return modelId;
     }
 
     protected void executeSummarization(
@@ -235,6 +297,94 @@ public class SummarizationManager implements ContextManager {
         } catch (Exception e) {
             // Fallback: skip summarization, keep original interactions
             log.warn("Summarization setup failed, keeping original interactions: {}", e.getMessage());
+        }
+    }
+
+    protected void executeSummarizationForStructuredHistory(
+        ContextManagerContext context,
+        String modelId,
+        Map<String, String> summarizationParameters,
+        List<Message> remainingMessages
+    ) {
+        CountDownLatch latch = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicBoolean timedOut = new java.util.concurrent.atomic.AtomicBoolean(false);
+
+        try {
+            // Create ML input dataset for remote inference
+            MLInputDataset inputDataset = RemoteInferenceInputDataSet.builder().parameters(summarizationParameters).build();
+
+            // Create ML input
+            MLInput mlInput = MLInput.builder().algorithm(REMOTE).inputDataset(inputDataset).build();
+
+            // Create prediction request
+            MLPredictionTaskRequest request = MLPredictionTaskRequest.builder().modelId(modelId).mlInput(mlInput).build();
+
+            // Execute prediction
+            ActionListener<MLTaskResponse> listener = ActionListener.wrap(response -> {
+                try {
+                    if (timedOut.get()) {
+                        return;
+                    }
+                    String summary = extractSummaryFromResponse(response, context);
+                    if (summary != null) {
+                        processStructuredSummarizationResult(context, summary, remainingMessages);
+                    } else {
+                        log.warn("Summary extraction failed for structured history, keeping original messages");
+                    }
+                } catch (Exception e) {
+                    log.warn("Structured history summarization failed, keeping original messages: {}", e.getMessage());
+                } finally {
+                    latch.countDown();
+                }
+            }, e -> {
+                if (!timedOut.get()) {
+                    log.warn("Structured history summarization request failed, keeping original messages: {}", e.getMessage());
+                }
+                latch.countDown();
+            });
+
+            client.execute(MLPredictionTaskAction.INSTANCE, request, listener);
+
+            // Wait for summarization to complete (30 second timeout)
+            boolean finished = latch.await(30, TimeUnit.SECONDS);
+            if (!finished) {
+                timedOut.set(true);
+                log.warn("Structured history summarization timed out after 30s; skipping late results");
+            }
+
+        } catch (Exception e) {
+            log.warn("Structured history summarization setup failed, keeping original messages: {}", e.getMessage());
+        }
+    }
+
+    protected void processStructuredSummarizationResult(
+        ContextManagerContext context,
+        String summary,
+        List<Message> remainingMessages
+    ) {
+        try {
+            // Create summary content block
+            ContentBlock summaryBlock = new ContentBlock();
+            summaryBlock.setType(ContentType.TEXT);
+            summaryBlock.setText("Summarized previous interactions: " + summary);
+
+            // Create summary message with assistant role
+            Message summaryMessage = new Message("assistant", List.of(summaryBlock));
+
+            // Combine summary message with remaining messages
+            List<Message> updatedHistory = new ArrayList<>();
+            updatedHistory.add(summaryMessage);
+            updatedHistory.addAll(remainingMessages);
+
+            context.setStructuredChatHistory(updatedHistory);
+
+            log
+                .info(
+                    "Structured history summarization completed: {} messages preserved",
+                    remainingMessages.size()
+                );
+        } catch (Exception e) {
+            log.error("Failed to process structured history summarization result", e);
         }
     }
 
