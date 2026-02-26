@@ -13,6 +13,7 @@ import static org.opensearch.ml.engine.memory.ConversationIndexMemory.APP_TYPE;
 import static org.opensearch.ml.engine.memory.ConversationIndexMemory.MEMORY_ID;
 import static org.opensearch.ml.engine.memory.ConversationIndexMemory.MEMORY_NAME;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -29,6 +30,7 @@ import org.opensearch.core.action.ActionListener;
 import org.opensearch.ml.common.input.execute.agent.ContentBlock;
 import org.opensearch.ml.common.input.execute.agent.ContentType;
 import org.opensearch.ml.common.input.execute.agent.Message;
+import org.opensearch.ml.common.input.execute.agent.ToolCall;
 import org.opensearch.ml.engine.indices.MLIndicesHandler;
 import org.opensearch.ml.memory.action.conversation.CreateConversationResponse;
 import org.opensearch.ml.memory.action.conversation.CreateInteractionResponse;
@@ -308,5 +310,241 @@ public class ConversationIndexMemoryTest {
         indexMemory.getStructuredMessages(listener);
 
         verify(listener).onFailure(isA(RuntimeException.class));
+    }
+
+    // ==================== Tests for message filtering in saveStructuredMessages ====================
+
+    @Test
+    public void saveStructuredMessages_filtersToolRoleMessages() {
+        // A user message, a tool-result message (role="tool"), and an assistant text message
+        Message userMsg = createTextMessage("user", "What's the weather?");
+
+        Message toolMsg = new Message();
+        toolMsg.setRole("tool");
+        ContentBlock toolBlock = new ContentBlock();
+        toolBlock.setType(ContentType.TEXT);
+        toolBlock.setText("72F and sunny");
+        toolMsg.setContent(Collections.singletonList(toolBlock));
+        toolMsg.setToolCallId("call-123");
+
+        Message assistantMsg = createTextMessage("assistant", "The weather is 72F and sunny.");
+
+        doAnswer(invocation -> {
+            ActionListener<CreateInteractionResponse> l = invocation.getArgument(8);
+            l.onResponse(new CreateInteractionResponse("interaction_1"));
+            return null;
+        }).when(memoryManager).createInteraction(any(), any(), any(), any(), any(), any(), any(), any(), any());
+
+        ActionListener<Void> listener = mock(ActionListener.class);
+        indexMemory.saveStructuredMessages(Arrays.asList(userMsg, toolMsg, assistantMsg), listener);
+
+        // Tool message should be filtered out; only the user/assistant pair is saved
+        verify(listener).onResponse(null);
+        verify(memoryManager, times(1)).createInteraction(any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    public void saveStructuredMessages_filtersAssistantToolCallMessages() {
+        // User message, assistant message with tool calls, tool result, assistant final answer
+        Message userMsg = createTextMessage("user", "Calculate 2+2");
+
+        Message assistantToolCallMsg = new Message();
+        assistantToolCallMsg.setRole("assistant");
+        ContentBlock tcBlock = new ContentBlock();
+        tcBlock.setType(ContentType.TEXT);
+        tcBlock.setText("Let me calculate that.");
+        assistantToolCallMsg.setContent(Collections.singletonList(tcBlock));
+        List<ToolCall> toolCalls = new ArrayList<>();
+        toolCalls.add(new ToolCall("call-1", "function", new ToolCall.ToolFunction("calculator", "{\"expr\":\"2+2\"}")));
+        assistantToolCallMsg.setToolCalls(toolCalls);
+
+        Message toolResultMsg = new Message();
+        toolResultMsg.setRole("tool");
+        ContentBlock resultBlock = new ContentBlock();
+        resultBlock.setType(ContentType.TEXT);
+        resultBlock.setText("4");
+        toolResultMsg.setContent(Collections.singletonList(resultBlock));
+        toolResultMsg.setToolCallId("call-1");
+
+        Message assistantFinalMsg = createTextMessage("assistant", "2+2 equals 4.");
+
+        doAnswer(invocation -> {
+            ActionListener<CreateInteractionResponse> l = invocation.getArgument(8);
+            l.onResponse(new CreateInteractionResponse("interaction_1"));
+            return null;
+        }).when(memoryManager).createInteraction(any(), any(), any(), any(), any(), any(), any(), any(), any());
+
+        ActionListener<Void> listener = mock(ActionListener.class);
+        indexMemory.saveStructuredMessages(Arrays.asList(userMsg, assistantToolCallMsg, toolResultMsg, assistantFinalMsg), listener);
+
+        // Only user + final assistant text remain after filtering → 1 pair saved
+        verify(listener).onResponse(null);
+        verify(memoryManager, times(1)).createInteraction(any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    public void saveStructuredMessages_filtersMultimodalMessages() {
+        // A user message with an image block should be skipped
+        Message userTextMsg = createTextMessage("user", "Hello");
+
+        Message userImageMsg = new Message();
+        userImageMsg.setRole("user");
+        ContentBlock imageBlock = new ContentBlock();
+        imageBlock.setType(ContentType.IMAGE);
+        userImageMsg.setContent(Collections.singletonList(imageBlock));
+
+        Message assistantMsg = createTextMessage("assistant", "Hi there!");
+
+        doAnswer(invocation -> {
+            ActionListener<CreateInteractionResponse> l = invocation.getArgument(8);
+            l.onResponse(new CreateInteractionResponse("interaction_1"));
+            return null;
+        }).when(memoryManager).createInteraction(any(), any(), any(), any(), any(), any(), any(), any(), any());
+
+        ActionListener<Void> listener = mock(ActionListener.class);
+        indexMemory.saveStructuredMessages(Arrays.asList(userTextMsg, userImageMsg, assistantMsg), listener);
+
+        // Image message filtered; text user + assistant pair saved
+        verify(listener).onResponse(null);
+        verify(memoryManager, times(1)).createInteraction(any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    public void saveStructuredMessages_allMessagesFilteredOut_returnsNull() {
+        // Only tool and tool-call messages — all get filtered
+        Message toolMsg = new Message();
+        toolMsg.setRole("tool");
+        ContentBlock block = new ContentBlock();
+        block.setType(ContentType.TEXT);
+        block.setText("result");
+        toolMsg.setContent(Collections.singletonList(block));
+
+        Message assistantToolCallMsg = new Message();
+        assistantToolCallMsg.setRole("assistant");
+        List<ToolCall> toolCalls = new ArrayList<>();
+        toolCalls.add(new ToolCall("call-1", "function", new ToolCall.ToolFunction("search", "{}")));
+        assistantToolCallMsg.setToolCalls(toolCalls);
+
+        ActionListener<Void> listener = mock(ActionListener.class);
+        indexMemory.saveStructuredMessages(Arrays.asList(toolMsg, assistantToolCallMsg), listener);
+
+        // All messages filtered → early return with null
+        verify(listener).onResponse(null);
+        verify(memoryManager, never()).createInteraction(any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    public void saveStructuredMessages_nullMessagesInList_skipped() {
+        Message userMsg = createTextMessage("user", "Question");
+        Message assistantMsg = createTextMessage("assistant", "Answer");
+
+        doAnswer(invocation -> {
+            ActionListener<CreateInteractionResponse> l = invocation.getArgument(8);
+            l.onResponse(new CreateInteractionResponse("interaction_1"));
+            return null;
+        }).when(memoryManager).createInteraction(any(), any(), any(), any(), any(), any(), any(), any(), any());
+
+        ActionListener<Void> listener = mock(ActionListener.class);
+        indexMemory.saveStructuredMessages(Arrays.asList(null, userMsg, null, assistantMsg), listener);
+
+        // Null entries skipped; user/assistant pair saved
+        verify(listener).onResponse(null);
+        verify(memoryManager, times(1)).createInteraction(any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    public void saveStructuredMessages_mixedToolConversation_onlyTextQAPairsSaved() {
+        // Full tool-use conversation: user → assistant(tool_call) → tool → assistant(text)
+        // repeated twice
+        Message user1 = createTextMessage("user", "Q1");
+
+        Message assistantTC1 = new Message();
+        assistantTC1.setRole("assistant");
+        List<ToolCall> tc1 = new ArrayList<>();
+        tc1.add(new ToolCall("c1", "function", new ToolCall.ToolFunction("fn1", "{}")));
+        assistantTC1.setToolCalls(tc1);
+
+        Message tool1 = new Message();
+        tool1.setRole("tool");
+        ContentBlock t1Block = new ContentBlock();
+        t1Block.setType(ContentType.TEXT);
+        t1Block.setText("result1");
+        tool1.setContent(Collections.singletonList(t1Block));
+
+        Message assistantFinal1 = createTextMessage("assistant", "A1");
+
+        Message user2 = createTextMessage("user", "Q2");
+
+        Message assistantTC2 = new Message();
+        assistantTC2.setRole("assistant");
+        List<ToolCall> tc2 = new ArrayList<>();
+        tc2.add(new ToolCall("c2", "function", new ToolCall.ToolFunction("fn2", "{}")));
+        assistantTC2.setToolCalls(tc2);
+
+        Message tool2 = new Message();
+        tool2.setRole("tool");
+        ContentBlock t2Block = new ContentBlock();
+        t2Block.setType(ContentType.TEXT);
+        t2Block.setText("result2");
+        tool2.setContent(Collections.singletonList(t2Block));
+
+        Message assistantFinal2 = createTextMessage("assistant", "A2");
+
+        doAnswer(invocation -> {
+            ActionListener<CreateInteractionResponse> l = invocation.getArgument(8);
+            l.onResponse(new CreateInteractionResponse("interaction_x"));
+            return null;
+        }).when(memoryManager).createInteraction(any(), any(), any(), any(), any(), any(), any(), any(), any());
+
+        ActionListener<Void> listener = mock(ActionListener.class);
+        indexMemory
+            .saveStructuredMessages(
+                Arrays.asList(user1, assistantTC1, tool1, assistantFinal1, user2, assistantTC2, tool2, assistantFinal2),
+                listener
+            );
+
+        // After filtering: user1, assistantFinal1, user2, assistantFinal2 → 2 pairs
+        verify(listener).onResponse(null);
+        verify(memoryManager, times(2)).createInteraction(any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    public void saveStructuredMessages_pendingInteraction_usesFilteredMessages() {
+        // Set up a pending incomplete interaction
+        indexMemory.getLastIncompleteInteractionId().set("pending_id_123");
+
+        // Messages include a tool result (should be filtered) and an assistant text answer
+        Message toolMsg = new Message();
+        toolMsg.setRole("tool");
+        ContentBlock tBlock = new ContentBlock();
+        tBlock.setType(ContentType.TEXT);
+        tBlock.setText("tool output");
+        toolMsg.setContent(Collections.singletonList(tBlock));
+
+        Message assistantMsg = createTextMessage("assistant", "Here is the answer.");
+
+        doAnswer(invocation -> {
+            ActionListener<org.opensearch.action.update.UpdateResponse> l = invocation.getArgument(2);
+            l.onResponse(null);
+            return null;
+        }).when(memoryManager).updateInteraction(any(), any(), any());
+
+        ActionListener<Void> listener = mock(ActionListener.class);
+        indexMemory.saveStructuredMessages(Arrays.asList(toolMsg, assistantMsg), listener);
+
+        // Should update the pending interaction with the assistant text (from filtered list)
+        verify(memoryManager).updateInteraction(any(), any(), any());
+        verify(listener).onResponse(null);
+        // The pending ID should be consumed
+        Assert.assertNull(indexMemory.getLastIncompleteInteractionId().get());
+    }
+
+    // ==================== Helper ====================
+
+    private Message createTextMessage(String role, String text) {
+        ContentBlock block = new ContentBlock();
+        block.setType(ContentType.TEXT);
+        block.setText(text);
+        return new Message(role, Collections.singletonList(block));
     }
 }

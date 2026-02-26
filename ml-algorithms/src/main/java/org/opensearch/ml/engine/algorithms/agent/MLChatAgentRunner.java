@@ -423,7 +423,8 @@ public class MLChatAgentRunner implements MLAgentRunner {
         String question = tmpParameters.get(MLAgentExecutor.QUESTION);
         String parentInteractionId = tmpParameters.get(MLAgentExecutor.PARENT_INTERACTION_ID);
         boolean verbose = Boolean.parseBoolean(tmpParameters.getOrDefault(VERBOSE, "false"));
-        boolean traceDisabled = tmpParameters.containsKey(DISABLE_TRACE) && Boolean.parseBoolean(tmpParameters.get(DISABLE_TRACE));
+        boolean traceDisabled = usesUnifiedInterface
+            || (tmpParameters.containsKey(DISABLE_TRACE) && Boolean.parseBoolean(tmpParameters.get(DISABLE_TRACE)));
 
         // Trace number
         AtomicInteger traceNumber = new AtomicInteger(0);

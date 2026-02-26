@@ -173,36 +173,36 @@ public class ConversationIndexMemory implements Memory<org.opensearch.ml.common.
             return;
         }
 
-        // Detect multimodal content and warn
-        boolean hasMultimodalContent = false;
+        // Filter to text-only Q&A messages — skip tool calls, tool results, and non-text content
+        List<Message> filteredMessages = new ArrayList<>();
         for (Message message : messages) {
-            if (message != null && message.getContent() != null) {
-                for (ContentBlock block : message.getContent()) {
-                    if (block.getType() != ContentType.TEXT) {
-                        hasMultimodalContent = true;
-                        break;
-                    }
-                }
+            if (message == null)
+                continue;
+            // Skip tool results and assistant tool-call requests
+            String role = message.getRole();
+            if ("tool".equalsIgnoreCase(role))
+                continue;
+            if ("assistant".equalsIgnoreCase(role) && message.getToolCalls() != null && !message.getToolCalls().isEmpty())
+                continue;
+
+            if (message.getContent() != null) {
+                boolean hasNonText = message.getContent().stream().anyMatch(block -> block.getType() != ContentType.TEXT);
+                if (hasNonText)
+                    continue;
             }
-            if (hasMultimodalContent)
-                break;
+            filteredMessages.add(message);
         }
 
-        if (hasMultimodalContent) {
-            log
-                .warn(
-                    "Multimodal content detected in messages for ConversationIndexMemory (conversation: {}). "
-                        + "Only text content will be stored. Images, documents, and other non-text content will be ignored. "
-                        + "Consider using AgenticConversationMemory for full multimodal support.",
-                    conversationId
-                );
+        if (filteredMessages.isEmpty()) {
+            listener.onResponse(null);
+            return;
         }
 
         // Check for pending incomplete interaction — this happens when saveAssistantResponseAsStructuredMessage
         // is called after performInitialMemoryOperations saved the trailing user message.
         String pendingInteractionId = this.lastIncompleteInteractionId.getAndSet(null);
         if (pendingInteractionId != null) {
-            String assistantText = extractAssistantText(messages);
+            String assistantText = extractAssistantText(filteredMessages);
             if (assistantText != null && !assistantText.isEmpty()) {
                 String interactionId = pendingInteractionId;
                 update(interactionId, Map.of(AI_RESPONSE_FIELD, assistantText), ActionListener.wrap(updateResponse -> {
@@ -216,11 +216,11 @@ public class ConversationIndexMemory implements Memory<org.opensearch.ml.common.
             }
         }
 
-        List<ConversationIndexMessage> messagePairs = AgentUtils.extractMessagePairs(messages, conversationId, null);
+        List<ConversationIndexMessage> messagePairs = AgentUtils.extractMessagePairs(filteredMessages, conversationId, null);
 
         // Check for trailing user message (last message is user role, not paired by extractMessagePairs).
         // This happens when performInitialMemoryOperations saves input messages ending with the user's current turn.
-        Message lastMessage = messages.get(messages.size() - 1);
+        Message lastMessage = filteredMessages.get(filteredMessages.size() - 1);
         boolean hasTrailingUser = lastMessage != null && "user".equalsIgnoreCase(lastMessage.getRole());
 
         if (messagePairs.isEmpty() && !hasTrailingUser) {
