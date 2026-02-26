@@ -17,8 +17,10 @@ import org.opensearch.ml.common.contextmanager.ContextManagerContext;
 import org.opensearch.ml.common.conversation.Interaction;
 import org.opensearch.ml.common.hooks.HookRegistry;
 import org.opensearch.ml.common.hooks.PostMemoryEvent;
+import org.opensearch.ml.common.hooks.PostStructuredMemoryEvent;
 import org.opensearch.ml.common.hooks.PostToolEvent;
 import org.opensearch.ml.common.hooks.PreLLMEvent;
+import org.opensearch.ml.common.input.execute.agent.Message;
 import org.opensearch.ml.common.memory.Memory;
 import org.opensearch.ml.common.utils.StringUtils;
 import org.opensearch.ml.engine.memory.ConversationIndexMemory;
@@ -212,6 +214,62 @@ public class AgentContextUtil {
             return context;
         } catch (Exception e) {
             log.error("Failed to emit POST_MEMORY hook event", e);
+            return context;
+        }
+    }
+
+    public static ContextManagerContext buildContextManagerContextForStructuredMemory(
+        Map<String, String> parameters,
+        List<Message> retrievedStructuredHistory,
+        List<MLToolSpec> toolSpecs,
+        Memory memory
+    ) {
+        ContextManagerContext.ContextManagerContextBuilder builder = ContextManagerContext.builder();
+
+        String systemPrompt = parameters.get(SYSTEM_PROMPT_FIELD);
+        if (systemPrompt != null) {
+            builder.systemPrompt(systemPrompt);
+        }
+
+        String userPrompt = parameters.get(QUESTION);
+        if (userPrompt != null) {
+            builder.userPrompt(userPrompt);
+        }
+
+        builder.structuredChatHistory(retrievedStructuredHistory != null ? new ArrayList<>(retrievedStructuredHistory) : new ArrayList<>());
+
+        if (toolSpecs != null) {
+            builder.toolConfigs(toolSpecs);
+        }
+
+        Map<String, String> contextParameters = new HashMap<>();
+        contextParameters.putAll(parameters);
+        builder.parameters(contextParameters);
+
+        return builder.build();
+    }
+
+    public static ContextManagerContext emitPostStructuredMemoryHook(
+        Map<String, String> parameters,
+        List<Message> retrievedStructuredHistory,
+        List<MLToolSpec> toolSpecs,
+        Memory memory,
+        HookRegistry hookRegistry
+    ) {
+        ContextManagerContext context = buildContextManagerContextForStructuredMemory(
+            parameters, retrievedStructuredHistory, toolSpecs, memory
+        );
+
+        if (hookRegistry == null) {
+            return context;
+        }
+
+        try {
+            PostStructuredMemoryEvent event = new PostStructuredMemoryEvent(context, retrievedStructuredHistory, new HashMap<>());
+            hookRegistry.emit(event);
+            return context;
+        } catch (Exception e) {
+            log.error("Failed to emit POST_STRUCTURED_MEMORY hook event", e);
             return context;
         }
     }

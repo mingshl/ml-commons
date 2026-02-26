@@ -18,6 +18,9 @@ import org.junit.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.opensearch.ml.common.contextmanager.ContextManagerContext;
+import org.opensearch.ml.common.input.execute.agent.ContentBlock;
+import org.opensearch.ml.common.input.execute.agent.ContentType;
+import org.opensearch.ml.common.input.execute.agent.Message;
 import org.opensearch.ml.common.output.model.ModelTensor;
 import org.opensearch.ml.common.output.model.ModelTensorOutput;
 import org.opensearch.ml.common.output.model.ModelTensors;
@@ -323,6 +326,117 @@ public class SummarizationManagerTest {
         for (int i = 0; i < originalSize; i++) {
             Assert.assertEquals("Tool output " + (i + 1), context.getToolInteractions().get(i));
         }
+    }
+
+    @Test
+    public void testExecuteWithEmptyStructuredChatHistory() {
+        Map<String, Object> config = new HashMap<>();
+        manager.initialize(config);
+
+        context = ContextManagerContext.builder()
+            .toolInteractions(new ArrayList<>())
+            .parameters(new HashMap<>())
+            .structuredChatHistory(new ArrayList<>())
+            .build();
+
+        manager.execute(context);
+
+        Assert.assertTrue(context.getStructuredChatHistory().isEmpty());
+    }
+
+    @Test
+    public void testExecuteWithNullStructuredChatHistory() {
+        Map<String, Object> config = new HashMap<>();
+        manager.initialize(config);
+
+        context = ContextManagerContext.builder()
+            .toolInteractions(new ArrayList<>())
+            .parameters(new HashMap<>())
+            .structuredChatHistory(null)
+            .build();
+
+        manager.execute(context);
+
+        Assert.assertNull(context.getStructuredChatHistory());
+    }
+
+    @Test
+    public void testExecuteWithInsufficientStructuredMessages() {
+        Map<String, Object> config = new HashMap<>();
+        config.put("preserve_recent_messages", 10);
+        manager.initialize(config);
+
+        // Add only 5 structured messages - not enough to summarize
+        List<Message> messages = createStructuredMessages(5);
+        context = ContextManagerContext.builder()
+            .toolInteractions(new ArrayList<>())
+            .parameters(new HashMap<>())
+            .structuredChatHistory(messages)
+            .build();
+
+        manager.execute(context);
+
+        // Should remain unchanged
+        Assert.assertEquals(5, context.getStructuredChatHistory().size());
+    }
+
+    @Test
+    public void testExecuteWithNoModelIdStructuredMessages() {
+        Map<String, Object> config = new HashMap<>();
+        manager.initialize(config);
+
+        // Add enough structured messages to trigger summarization
+        List<Message> messages = createStructuredMessages(20);
+        context = ContextManagerContext.builder()
+            .toolInteractions(new ArrayList<>())
+            .parameters(new HashMap<>())
+            .structuredChatHistory(messages)
+            .build();
+
+        manager.execute(context);
+
+        // Should remain unchanged due to missing model ID
+        Assert.assertEquals(20, context.getStructuredChatHistory().size());
+    }
+
+    @Test
+    public void testProcessStructuredSummarizationResult() {
+        Map<String, Object> config = new HashMap<>();
+        manager.initialize(config);
+
+        List<Message> remainingMessages = createStructuredMessages(5);
+        context = ContextManagerContext.builder()
+            .toolInteractions(new ArrayList<>())
+            .parameters(new HashMap<>())
+            .structuredChatHistory(new ArrayList<>())
+            .build();
+
+        manager.processStructuredSummarizationResult(context, "Test structured summary", remainingMessages);
+
+        // Should have 1 summary + 5 remaining = 6 total
+        Assert.assertEquals(6, context.getStructuredChatHistory().size());
+
+        // First should be summary message with assistant role
+        Message summaryMsg = context.getStructuredChatHistory().get(0);
+        Assert.assertEquals("assistant", summaryMsg.getRole());
+        Assert.assertNotNull(summaryMsg.getContent());
+        Assert.assertEquals(1, summaryMsg.getContent().size());
+        Assert.assertTrue(summaryMsg.getContent().get(0).getText().contains("Test structured summary"));
+    }
+
+    /**
+     * Helper method to create structured messages for testing.
+     */
+    private List<Message> createStructuredMessages(int count) {
+        List<Message> messages = new ArrayList<>();
+        for (int i = 1; i <= count; i++) {
+            ContentBlock block = new ContentBlock();
+            block.setType(ContentType.TEXT);
+            block.setText("Message content " + i);
+            String role = (i % 2 == 1) ? "user" : "assistant";
+            messages.add(new Message(role, List.of(block)));
+        }
+        return messages;
     }
 
     /**

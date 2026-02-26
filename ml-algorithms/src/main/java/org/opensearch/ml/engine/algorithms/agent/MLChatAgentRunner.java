@@ -282,9 +282,12 @@ public class MLChatAgentRunner implements MLAgentRunner {
                     this.nextStructuredMessageId = allMessages.size();
 
                     // Apply history limit
-                    List<Message> history = messageHistoryLimit > 0 && allMessages.size() > messageHistoryLimit
-                        ? allMessages.subList(allMessages.size() - messageHistoryLimit, allMessages.size())
-                        : allMessages;
+                    List<Message> limitedHistory = messageHistoryLimit > 0 && allMessages.size() > messageHistoryLimit
+                        ? new ArrayList<>(allMessages.subList(allMessages.size() - messageHistoryLimit, allMessages.size()))
+                        : new ArrayList<>(allMessages);
+
+                    // Emit POST_MEMORY hook to allow context managers to modify retrieved structured history
+                    List<Message> history = processPostStructuredMemoryHook(params, limitedHistory, memory, hookRegistry);
 
                     // Save input messages
                     memory.saveStructuredMessages(inputMessages, nextStructuredMessageId, ActionListener.wrap(v -> {
@@ -440,6 +443,24 @@ public class MLChatAgentRunner implements MLAgentRunner {
             }
         }
         return retrievedHistory;
+    }
+
+    private List<Message> processPostStructuredMemoryHook(
+        Map<String, String> params,
+        List<Message> retrievedStructuredHistory,
+        Memory memory,
+        HookRegistry hookRegistry
+    ) {
+        if (hookRegistry != null && !retrievedStructuredHistory.isEmpty()) {
+            ContextManagerContext contextAfterEvent = AgentContextUtil
+                .emitPostStructuredMemoryHook(params, retrievedStructuredHistory, null, memory, hookRegistry);
+
+            List<Message> updatedHistory = contextAfterEvent.getStructuredChatHistory();
+            if (updatedHistory != null && !updatedHistory.equals(retrievedStructuredHistory)) {
+                return updatedHistory;
+            }
+        }
+        return retrievedStructuredHistory;
     }
 
     private void runAgent(
