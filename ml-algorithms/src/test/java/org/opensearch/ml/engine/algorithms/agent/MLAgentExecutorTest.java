@@ -11,10 +11,12 @@ import static org.opensearch.ml.engine.algorithms.agent.MLAgentExecutor.QUESTION
 
 import java.io.IOException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.junit.Assert;
 import org.junit.Before;
@@ -716,6 +718,356 @@ public class MLAgentExecutorTest {
         BytesReference bytesReference = BytesReference.bytes(content);
         GetResult getResult = new GetResult("indexName", agentId, 111l, 111l, 111l, true, bytesReference, null, null);
         return new GetResponse(getResult);
+    }
+
+    @Test
+    public void test_PerformInitialMemoryOperations_WithHistoryAndInputMessages() {
+        // Setup: history has 2 messages, input has 1 message
+        List<Message> historyMessages = new ArrayList<>();
+        historyMessages.add(createTestMessage("user", "previous question"));
+        historyMessages.add(createTestMessage("assistant", "previous answer"));
+
+        List<Message> inputMessages = new ArrayList<>();
+        inputMessages.add(createTestMessage("user", "new question"));
+
+        MLAgent agent = MLAgent
+            .builder()
+            .name("test_agent")
+            .type(MLAgentType.CONVERSATIONAL.name())
+            .model(MLAgentModelSpec.builder().modelId("anthropic.claude-v2").modelProvider("bedrock/converse").build())
+            .build();
+
+        // Mock getStructuredMessages to return history
+        doAnswer(invocation -> {
+            ActionListener<List<Message>> listener = invocation.getArgument(0);
+            listener.onResponse(historyMessages);
+            return null;
+        }).when(memory).getStructuredMessages(any());
+
+        // Mock saveStructuredMessages to succeed
+        doAnswer(invocation -> {
+            ActionListener<Void> listener = invocation.getArgument(1);
+            listener.onResponse(null);
+            return null;
+        }).when(memory).saveStructuredMessages(any(), any());
+
+        Map<String, String> params = new HashMap<>();
+        AtomicBoolean continuationCalled = new AtomicBoolean(false);
+
+        mlAgentExecutor.performInitialMemoryOperations(memory, inputMessages, params, agent, listener, () -> continuationCalled.set(true));
+
+        assertTrue("Continuation should be called", continuationCalled.get());
+        // NEXT_STRUCTURED_MESSAGE_ID no longer set — memory auto-resolves IDs
+        assertNotNull(params.get(MLChatAgentRunner.NEW_CHAT_HISTORY));
+    }
+
+    @Test
+    public void test_PerformInitialMemoryOperations_EmptyHistory() {
+        List<Message> inputMessages = new ArrayList<>();
+        inputMessages.add(createTestMessage("user", "first question"));
+
+        MLAgent agent = MLAgent
+            .builder()
+            .name("test_agent")
+            .type(MLAgentType.CONVERSATIONAL.name())
+            .model(MLAgentModelSpec.builder().modelId("anthropic.claude-v2").modelProvider("bedrock/converse").build())
+            .build();
+
+        // Mock getStructuredMessages to return empty history
+        doAnswer(invocation -> {
+            ActionListener<List<Message>> listener = invocation.getArgument(0);
+            listener.onResponse(new ArrayList<>());
+            return null;
+        }).when(memory).getStructuredMessages(any());
+
+        // Mock saveStructuredMessages to succeed
+        doAnswer(invocation -> {
+            ActionListener<Void> listener = invocation.getArgument(1);
+            listener.onResponse(null);
+            return null;
+        }).when(memory).saveStructuredMessages(any(), any());
+
+        Map<String, String> params = new HashMap<>();
+        AtomicBoolean continuationCalled = new AtomicBoolean(false);
+
+        mlAgentExecutor.performInitialMemoryOperations(memory, inputMessages, params, agent, listener, () -> continuationCalled.set(true));
+
+        assertTrue("Continuation should be called", continuationCalled.get());
+        // NEXT_STRUCTURED_MESSAGE_ID no longer set — memory auto-resolves IDs
+        assertNull("NEW_CHAT_HISTORY should not be set for empty history", params.get(MLChatAgentRunner.NEW_CHAT_HISTORY));
+    }
+
+    @Test
+    public void test_PerformInitialMemoryOperations_HistoryLimitApplied() {
+        // Setup: history has 5 messages, limit is 2
+        List<Message> historyMessages = new ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            historyMessages.add(createTestMessage("user", "question " + i));
+        }
+
+        List<Message> inputMessages = new ArrayList<>();
+        inputMessages.add(createTestMessage("user", "new question"));
+
+        MLAgent agent = MLAgent
+            .builder()
+            .name("test_agent")
+            .type(MLAgentType.CONVERSATIONAL.name())
+            .model(MLAgentModelSpec.builder().modelId("anthropic.claude-v2").modelProvider("bedrock/converse").build())
+            .build();
+
+        doAnswer(invocation -> {
+            ActionListener<List<Message>> listener = invocation.getArgument(0);
+            listener.onResponse(historyMessages);
+            return null;
+        }).when(memory).getStructuredMessages(any());
+
+        doAnswer(invocation -> {
+            ActionListener<Void> listener = invocation.getArgument(1);
+            listener.onResponse(null);
+            return null;
+        }).when(memory).saveStructuredMessages(any(), any());
+
+        Map<String, String> params = new HashMap<>();
+        params.put(MLAgentExecutor.MESSAGE_HISTORY_LIMIT, "2");
+        AtomicBoolean continuationCalled = new AtomicBoolean(false);
+
+        mlAgentExecutor.performInitialMemoryOperations(memory, inputMessages, params, agent, listener, () -> continuationCalled.set(true));
+
+        assertTrue("Continuation should be called", continuationCalled.get());
+        // nextStructuredMessageId = 5 (history size) + 1 (input) = 6
+        // NEXT_STRUCTURED_MESSAGE_ID no longer set — memory auto-resolves IDs
+    }
+
+    @Test
+    public void test_PerformInitialMemoryOperations_GetStructuredMessagesFails() {
+        MLAgent agent = MLAgent
+            .builder()
+            .name("test_agent")
+            .type(MLAgentType.CONVERSATIONAL.name())
+            .model(MLAgentModelSpec.builder().modelId("anthropic.claude-v2").modelProvider("bedrock/converse").build())
+            .build();
+
+        // Mock getStructuredMessages to fail
+        doAnswer(invocation -> {
+            ActionListener<List<Message>> listener = invocation.getArgument(0);
+            listener.onFailure(new RuntimeException("Memory read failed"));
+            return null;
+        }).when(memory).getStructuredMessages(any());
+
+        Map<String, String> params = new HashMap<>();
+
+        mlAgentExecutor
+            .performInitialMemoryOperations(
+                memory,
+                Collections.emptyList(),
+                params,
+                agent,
+                listener,
+                () -> Assert.fail("Continuation should not be called on failure")
+            );
+
+        verify(listener).onFailure(any(RuntimeException.class));
+    }
+
+    @Test
+    public void test_PerformInitialMemoryOperations_SaveStructuredMessagesFails() {
+        MLAgent agent = MLAgent
+            .builder()
+            .name("test_agent")
+            .type(MLAgentType.CONVERSATIONAL.name())
+            .model(MLAgentModelSpec.builder().modelId("anthropic.claude-v2").modelProvider("bedrock/converse").build())
+            .build();
+
+        // Mock getStructuredMessages to succeed
+        doAnswer(invocation -> {
+            ActionListener<List<Message>> listener = invocation.getArgument(0);
+            listener.onResponse(new ArrayList<>());
+            return null;
+        }).when(memory).getStructuredMessages(any());
+
+        // Mock saveStructuredMessages to fail
+        doAnswer(invocation -> {
+            ActionListener<Void> listener = invocation.getArgument(1);
+            listener.onFailure(new RuntimeException("Memory write failed"));
+            return null;
+        }).when(memory).saveStructuredMessages(any(), any());
+
+        Map<String, String> params = new HashMap<>();
+
+        mlAgentExecutor
+            .performInitialMemoryOperations(
+                memory,
+                Collections.emptyList(),
+                params,
+                agent,
+                listener,
+                () -> Assert.fail("Continuation should not be called on failure")
+            );
+
+        verify(listener).onFailure(any(RuntimeException.class));
+    }
+
+    @Test
+    public void test_PerformInitialMemoryOperations_AGUIContextAppend() {
+        // Setup: AGUI agent with history and context
+        List<Message> historyMessages = new ArrayList<>();
+        historyMessages.add(createTestMessage("user", "hello"));
+
+        List<Message> inputMessages = new ArrayList<>();
+        inputMessages.add(createTestMessage("user", "new question"));
+
+        MLAgent agent = MLAgent
+            .builder()
+            .name("test_agent")
+            .type(MLAgentType.AG_UI.name())
+            .model(MLAgentModelSpec.builder().modelId("anthropic.claude-v2").modelProvider("bedrock/converse").build())
+            .build();
+
+        doAnswer(invocation -> {
+            ActionListener<List<Message>> listener = invocation.getArgument(0);
+            listener.onResponse(historyMessages);
+            return null;
+        }).when(memory).getStructuredMessages(any());
+
+        doAnswer(invocation -> {
+            ActionListener<Void> listener = invocation.getArgument(1);
+            listener.onResponse(null);
+            return null;
+        }).when(memory).saveStructuredMessages(any(), any());
+
+        Map<String, String> params = new HashMap<>();
+        params.put("agent_type", "ag_ui");
+        params.put("context", "[{\"description\":\"location\",\"value\":\"SF\"}]");
+        AtomicBoolean continuationCalled = new AtomicBoolean(false);
+
+        mlAgentExecutor.performInitialMemoryOperations(memory, inputMessages, params, agent, listener, () -> continuationCalled.set(true));
+
+        assertTrue("Continuation should be called", continuationCalled.get());
+        // NEXT_STRUCTURED_MESSAGE_ID no longer set — memory auto-resolves IDs
+    }
+
+    private Message createTestMessage(String role, String text) {
+        ContentBlock textBlock = new ContentBlock();
+        textBlock.setType(ContentType.TEXT);
+        textBlock.setText(text);
+        return new Message(role, Collections.singletonList(textBlock));
+    }
+
+    @Test
+    public void test_PerformInitialMemoryOperations_WithTextInputConvertedToMessage() {
+        // Simulate what saveRootInteractionAndExecute does for InputType.TEXT:
+        // converts plain text to a Message("user", [ContentBlock(TEXT, text)])
+        String text = "What is machine learning?";
+        ContentBlock textBlock = new ContentBlock();
+        textBlock.setType(ContentType.TEXT);
+        textBlock.setText(text);
+        List<Message> inputMessages = List.of(new Message("user", List.of(textBlock)));
+
+        MLAgent agent = MLAgent
+            .builder()
+            .name("test_agent")
+            .type(MLAgentType.CONVERSATIONAL.name())
+            .model(MLAgentModelSpec.builder().modelId("anthropic.claude-v2").modelProvider("bedrock/converse").build())
+            .build();
+
+        doAnswer(invocation -> {
+            ActionListener<List<Message>> listener = invocation.getArgument(0);
+            listener.onResponse(new ArrayList<>());
+            return null;
+        }).when(memory).getStructuredMessages(any());
+
+        doAnswer(invocation -> {
+            ActionListener<Void> listener = invocation.getArgument(1);
+            listener.onResponse(null);
+            return null;
+        }).when(memory).saveStructuredMessages(any(), any());
+
+        Map<String, String> params = new HashMap<>();
+        AtomicBoolean continuationCalled = new AtomicBoolean(false);
+
+        mlAgentExecutor.performInitialMemoryOperations(memory, inputMessages, params, agent, listener, () -> continuationCalled.set(true));
+
+        assertTrue("Continuation should be called", continuationCalled.get());
+        // NEXT_STRUCTURED_MESSAGE_ID no longer set — memory auto-resolves IDs
+
+        // Verify the message was saved with correct structure
+        ArgumentCaptor<List> messagesCaptor = ArgumentCaptor.forClass(List.class);
+        verify(memory).saveStructuredMessages(messagesCaptor.capture(), any());
+        List<Message> savedMessages = messagesCaptor.getValue();
+        assertEquals(1, savedMessages.size());
+        assertEquals("user", savedMessages.get(0).getRole());
+        assertEquals(ContentType.TEXT, savedMessages.get(0).getContent().get(0).getType());
+        assertEquals(text, savedMessages.get(0).getContent().get(0).getText());
+    }
+
+    @Test
+    public void test_PerformInitialMemoryOperations_WithContentBlocksConvertedToMessage() {
+        // Simulate what saveRootInteractionAndExecute does for InputType.CONTENT_BLOCKS:
+        // wraps content blocks in a Message("user", contentBlocks)
+        ContentBlock textBlock = new ContentBlock();
+        textBlock.setType(ContentType.TEXT);
+        textBlock.setText("Describe this image");
+        ContentBlock imageBlock = new ContentBlock();
+        imageBlock.setType(ContentType.IMAGE);
+        List<ContentBlock> blocks = List.of(textBlock, imageBlock);
+        List<Message> inputMessages = List.of(new Message("user", blocks));
+
+        MLAgent agent = MLAgent
+            .builder()
+            .name("test_agent")
+            .type(MLAgentType.CONVERSATIONAL.name())
+            .model(MLAgentModelSpec.builder().modelId("anthropic.claude-v2").modelProvider("bedrock/converse").build())
+            .build();
+
+        doAnswer(invocation -> {
+            ActionListener<List<Message>> listener = invocation.getArgument(0);
+            listener.onResponse(new ArrayList<>());
+            return null;
+        }).when(memory).getStructuredMessages(any());
+
+        doAnswer(invocation -> {
+            ActionListener<Void> listener = invocation.getArgument(1);
+            listener.onResponse(null);
+            return null;
+        }).when(memory).saveStructuredMessages(any(), any());
+
+        Map<String, String> params = new HashMap<>();
+        AtomicBoolean continuationCalled = new AtomicBoolean(false);
+
+        mlAgentExecutor.performInitialMemoryOperations(memory, inputMessages, params, agent, listener, () -> continuationCalled.set(true));
+
+        assertTrue("Continuation should be called", continuationCalled.get());
+        // NEXT_STRUCTURED_MESSAGE_ID no longer set — memory auto-resolves IDs
+
+        // Verify the message was saved with both content blocks
+        ArgumentCaptor<List> messagesCaptor = ArgumentCaptor.forClass(List.class);
+        verify(memory).saveStructuredMessages(messagesCaptor.capture(), any());
+        List<Message> savedMessages = messagesCaptor.getValue();
+        assertEquals(1, savedMessages.size());
+        assertEquals("user", savedMessages.get(0).getRole());
+        assertEquals(2, savedMessages.get(0).getContent().size());
+        assertEquals(ContentType.TEXT, savedMessages.get(0).getContent().get(0).getType());
+        assertEquals(ContentType.IMAGE, savedMessages.get(0).getContent().get(1).getType());
+    }
+
+    @Test
+    public void test_SupportsStructuredMessages_TrueForConversationalAndAGUI() {
+        MLAgent convAgent = createTestAgent(MLAgentType.CONVERSATIONAL.name());
+        MLAgent aguiAgent = createTestAgent(MLAgentType.AG_UI.name());
+
+        assertTrue(mlAgentExecutor.supportsStructuredMessages(convAgent));
+        assertTrue(mlAgentExecutor.supportsStructuredMessages(aguiAgent));
+    }
+
+    @Test
+    public void test_SupportsStructuredMessages_FalseForUnsupportedAgentTypes() {
+        MLAgent perAgent = createTestAgent(MLAgentType.PLAN_EXECUTE_AND_REFLECT.name());
+        MLAgent flowAgent = createTestAgent(MLAgentType.FLOW.name());
+        MLAgent convFlowAgent = createTestAgent(MLAgentType.CONVERSATIONAL_FLOW.name());
+
+        assertFalse(mlAgentExecutor.supportsStructuredMessages(perAgent));
+        assertFalse(mlAgentExecutor.supportsStructuredMessages(flowAgent));
+        assertFalse(mlAgentExecutor.supportsStructuredMessages(convFlowAgent));
     }
 
     @Test

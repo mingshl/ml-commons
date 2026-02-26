@@ -783,7 +783,7 @@ public class AgenticConversationMemoryTest {
             // Should complete successfully with null
         }, e -> { throw new RuntimeException("Should not fail", e); });
 
-        agenticMemory.saveStructuredMessages(null, null, testListener);
+        agenticMemory.saveStructuredMessages(null, testListener);
 
         // No API calls should be made
         verify(client, never()).execute(eq(MLAddMemoriesAction.INSTANCE), any(), any());
@@ -795,7 +795,7 @@ public class AgenticConversationMemoryTest {
             // Should complete successfully with empty list
         }, e -> { throw new RuntimeException("Should not fail", e); });
 
-        agenticMemory.saveStructuredMessages(java.util.Collections.emptyList(), null, testListener);
+        agenticMemory.saveStructuredMessages(java.util.Collections.emptyList(), testListener);
 
         verify(client, never()).execute(eq(MLAddMemoriesAction.INSTANCE), any(), any());
     }
@@ -811,6 +811,8 @@ public class AgenticConversationMemoryTest {
             java.util.Collections.singletonList(textBlock)
         );
 
+        mockEmptySearchForMaxMessageId();
+
         doAnswer(invocation -> {
             ActionListener<MLAddMemoriesResponse> listener = invocation.getArgument(2);
             listener.onResponse(MLAddMemoriesResponse.builder().workingMemoryId("wm_1").build());
@@ -821,7 +823,7 @@ public class AgenticConversationMemoryTest {
             // Success
         }, e -> { throw new RuntimeException("Should not fail", e); });
 
-        agenticMemory.saveStructuredMessages(java.util.Collections.singletonList(message), 0, testListener);
+        agenticMemory.saveStructuredMessages(java.util.Collections.singletonList(message), testListener);
 
         // Verify one save call was made
         verify(client, times(1)).execute(eq(MLAddMemoriesAction.INSTANCE), any(), any());
@@ -855,7 +857,9 @@ public class AgenticConversationMemoryTest {
             // Success
         }, e -> { throw new RuntimeException("Should not fail", e); });
 
-        agenticMemory.saveStructuredMessages(java.util.Arrays.asList(msg1, msg2), 0, testListener);
+        mockEmptySearchForMaxMessageId();
+
+        agenticMemory.saveStructuredMessages(java.util.Arrays.asList(msg1, msg2), testListener);
 
         // Verify two save calls were made (parallel)
         verify(client, times(2)).execute(eq(MLAddMemoriesAction.INSTANCE), any(), any());
@@ -879,7 +883,7 @@ public class AgenticConversationMemoryTest {
             assertTrue(e.getMessage().contains("Memory container ID is not configured"));
         });
 
-        memoryWithoutContainer.saveStructuredMessages(java.util.Collections.singletonList(message), 0, testListener);
+        memoryWithoutContainer.saveStructuredMessages(java.util.Collections.singletonList(message), testListener);
 
         verify(client, never()).execute(eq(MLAddMemoriesAction.INSTANCE), any(), any());
     }
@@ -921,9 +925,22 @@ public class AgenticConversationMemoryTest {
             assertNotNull(e);
         });
 
-        agenticMemory.saveStructuredMessages(java.util.Arrays.asList(msg1, msg2), 0, testListener);
+        mockEmptySearchForMaxMessageId();
+
+        agenticMemory.saveStructuredMessages(java.util.Arrays.asList(msg1, msg2), testListener);
 
         verify(client, times(2)).execute(eq(MLAddMemoriesAction.INSTANCE), any(), any());
+    }
+
+    private void mockEmptySearchForMaxMessageId() {
+        SearchResponse searchResponse = mock(SearchResponse.class);
+        SearchHits searchHits = new SearchHits(new SearchHit[0], new TotalHits(0, TotalHits.Relation.EQUAL_TO), 0);
+        when(searchResponse.getHits()).thenReturn(searchHits);
+        doAnswer(invocation -> {
+            ActionListener<SearchResponse> listener = invocation.getArgument(2);
+            listener.onResponse(searchResponse);
+            return null;
+        }).when(client).execute(eq(MLSearchMemoriesAction.INSTANCE), any(), any());
     }
 
     // ==================== Tests for getStructuredMessages ====================

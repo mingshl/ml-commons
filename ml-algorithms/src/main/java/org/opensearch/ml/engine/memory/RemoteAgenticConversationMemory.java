@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 import org.opensearch.action.get.GetResponse;
@@ -80,6 +81,7 @@ public class RemoteAgenticConversationMemory implements Memory<Message, CreateIn
     private final String conversationId;
     private final String memoryContainerId;
     private final String userId;
+    private final AtomicReference<Integer> nextMessageId = new AtomicReference<>();
     private final Connector connector;
     private final RemoteConnectorExecutor executor;
 
@@ -547,11 +549,7 @@ public class RemoteAgenticConversationMemory implements Memory<Message, CreateIn
     }
 
     @Override
-    public void saveStructuredMessages(
-        List<org.opensearch.ml.common.input.execute.agent.Message> messages,
-        Integer startMessageId,
-        ActionListener<Void> listener
-    ) {
+    public void saveStructuredMessages(List<org.opensearch.ml.common.input.execute.agent.Message> messages, ActionListener<Void> listener) {
         if (Strings.isNullOrEmpty(memoryContainerId)) {
             listener.onFailure(new IllegalStateException("Memory container ID is not configured"));
             return;
@@ -562,8 +560,9 @@ public class RemoteAgenticConversationMemory implements Memory<Message, CreateIn
             return;
         }
 
-        if (startMessageId != null) {
-            doSaveMessages(messages, startMessageId, listener);
+        Integer startId = this.nextMessageId.getAndSet(null);
+        if (startId != null) {
+            doSaveMessages(messages, startId, listener);
         } else {
             getMaxStructuredMessageId(
                 ActionListener.wrap(maxId -> { doSaveMessages(messages, maxId + 1, listener); }, listener::onFailure)
@@ -670,6 +669,7 @@ public class RemoteAgenticConversationMemory implements Memory<Message, CreateIn
                     if (hasError.get()) {
                         listener.onFailure(new RuntimeException("One or more structured messages failed to save"));
                     } else {
+                        nextMessageId.set(startId + messages.size());
                         listener.onResponse(null);
                     }
                 }

@@ -7,11 +7,13 @@ package org.opensearch.ml.engine.memory;
 
 import static org.opensearch.ml.common.CommonValue.ML_MEMORY_MESSAGE_INDEX;
 import static org.opensearch.ml.common.CommonValue.ML_MEMORY_META_INDEX;
+import static org.opensearch.ml.common.conversation.ActionConstants.AI_RESPONSE_FIELD;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.opensearch.action.update.UpdateResponse;
 import org.opensearch.core.action.ActionListener;
@@ -49,6 +51,7 @@ public class ConversationIndexMemory implements Memory<org.opensearch.ml.common.
     protected final Client client;
     private final MLIndicesHandler mlIndicesHandler;
     private MLMemoryManager memoryManager;
+    private final AtomicReference<String> lastIncompleteInteractionId = new AtomicReference<>();
 
     public ConversationIndexMemory(
         Client client,
@@ -164,7 +167,7 @@ public class ConversationIndexMemory implements Memory<org.opensearch.ml.common.
     }
 
     @Override
-    public void saveStructuredMessages(List<Message> messages, Integer startMessageId, ActionListener<Void> listener) {
+    public void saveStructuredMessages(List<Message> messages, ActionListener<Void> listener) {
         if (messages == null || messages.isEmpty()) {
             listener.onResponse(null);
             return;
@@ -195,15 +198,98 @@ public class ConversationIndexMemory implements Memory<org.opensearch.ml.common.
                 );
         }
 
+        // Check for pending incomplete interaction — this happens when saveAssistantResponseAsStructuredMessage
+        // is called after performInitialMemoryOperations saved the trailing user message.
+        String pendingInteractionId = this.lastIncompleteInteractionId.getAndSet(null);
+        if (pendingInteractionId != null) {
+            String assistantText = extractAssistantText(messages);
+            if (assistantText != null && !assistantText.isEmpty()) {
+                String interactionId = pendingInteractionId;
+                update(interactionId, Map.of(AI_RESPONSE_FIELD, assistantText), ActionListener.wrap(updateResponse -> {
+                    log.info("Updated incomplete interaction {} with assistant response", interactionId);
+                    listener.onResponse(null);
+                }, e -> {
+                    log.error("Failed to update incomplete interaction {} with assistant response", interactionId, e);
+                    listener.onFailure(e);
+                }));
+                return;
+            }
+        }
+
         List<ConversationIndexMessage> messagePairs = AgentUtils.extractMessagePairs(messages, conversationId, null);
 
-        if (messagePairs.isEmpty()) {
+        // Check for trailing user message (last message is user role, not paired by extractMessagePairs).
+        // This happens when performInitialMemoryOperations saves input messages ending with the user's current turn.
+        Message lastMessage = messages.get(messages.size() - 1);
+        boolean hasTrailingUser = lastMessage != null && "user".equalsIgnoreCase(lastMessage.getRole());
+
+        if (messagePairs.isEmpty() && !hasTrailingUser) {
             listener.onResponse(null);
             return;
         }
 
-        // Save pairs sequentially, continuing on individual failures
-        savePairsSequentially(messagePairs, 0, new AtomicBoolean(false), listener);
+        // Save complete pairs first, then handle trailing user message
+        ActionListener<Void> afterPairsListener = ActionListener.wrap(v -> {
+            if (hasTrailingUser) {
+                saveTrailingUserMessage(lastMessage, listener);
+            } else {
+                listener.onResponse(null);
+            }
+        }, listener::onFailure);
+
+        if (!messagePairs.isEmpty()) {
+            savePairsSequentially(messagePairs, 0, new AtomicBoolean(false), afterPairsListener);
+        } else {
+            afterPairsListener.onResponse(null);
+        }
+    }
+
+    /**
+     * Save a trailing user message as an interaction with an empty response.
+     * Stores the interaction ID so the subsequent assistant response can update it.
+     */
+    private void saveTrailingUserMessage(Message userMessage, ActionListener<Void> listener) {
+        String userText = AgentUtils.extractTextFromMessage(userMessage);
+        if (userText == null || userText.isEmpty()) {
+            listener.onResponse(null);
+            return;
+        }
+
+        ConversationIndexMessage msg = ConversationIndexMessage
+            .conversationIndexMessageBuilder()
+            .question(userText)
+            .response("")
+            .finalAnswer(true)
+            .sessionId(conversationId)
+            .build();
+
+        save(msg, null, null, null, ActionListener.wrap(interaction -> {
+            log.info("Saved trailing user message as incomplete interaction: {}", interaction.getId());
+            this.lastIncompleteInteractionId.set(interaction.getId());
+            listener.onResponse(null);
+        }, e -> {
+            log.error("Failed to save trailing user message", e);
+            listener.onFailure(e);
+        }));
+    }
+
+    /**
+     * Extract concatenated text from assistant messages.
+     */
+    private String extractAssistantText(List<Message> messages) {
+        StringBuilder sb = new StringBuilder();
+        for (Message msg : messages) {
+            if (msg != null && "assistant".equalsIgnoreCase(msg.getRole())) {
+                String text = AgentUtils.extractTextFromMessage(msg);
+                if (text != null && !text.isEmpty()) {
+                    if (sb.length() > 0) {
+                        sb.append("\n");
+                    }
+                    sb.append(text);
+                }
+            }
+        }
+        return sb.toString();
     }
 
     private void savePairsSequentially(

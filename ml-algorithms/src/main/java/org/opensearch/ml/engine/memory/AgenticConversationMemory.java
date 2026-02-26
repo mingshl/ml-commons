@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.opensearch.action.search.SearchResponse;
 import org.opensearch.action.update.UpdateResponse;
@@ -74,6 +75,7 @@ public class AgenticConversationMemory
     private final Client client;
     private final String conversationId;
     private final String memoryContainerId;
+    private final AtomicReference<Integer> nextMessageId = new AtomicReference<>();
 
     public AgenticConversationMemory(Client client, String memoryId, String memoryContainerId) {
         this.client = client;
@@ -425,14 +427,13 @@ public class AgenticConversationMemory
     }
 
     @Override
-    public void saveStructuredMessages(List<Message> messages, Integer startMessageId, ActionListener<Void> listener) {
+    public void saveStructuredMessages(List<Message> messages, ActionListener<Void> listener) {
         log
             .debug(
-                "saveStructuredMessages: Entry - memoryContainerId={}, conversationId={}, messages count={}, startMessageId={}",
+                "saveStructuredMessages: Entry - memoryContainerId={}, conversationId={}, messages count={}",
                 memoryContainerId,
                 conversationId,
-                messages != null ? messages.size() : "null",
-                startMessageId
+                messages != null ? messages.size() : "null"
             );
         if (Strings.isNullOrEmpty(memoryContainerId)) {
             listener.onFailure(new IllegalStateException("Memory container ID is not configured for this AgenticConversationMemory"));
@@ -444,8 +445,9 @@ public class AgenticConversationMemory
             return;
         }
 
-        if (startMessageId != null) {
-            doSaveMessages(messages, startMessageId, listener);
+        Integer startId = this.nextMessageId.getAndSet(null);
+        if (startId != null) {
+            doSaveMessages(messages, startId, listener);
         } else {
             getMaxStructuredMessageId(
                 ActionListener.wrap(maxId -> { doSaveMessages(messages, maxId + 1, listener); }, listener::onFailure)
@@ -542,6 +544,7 @@ public class AgenticConversationMemory
                     if (hasError.get()) {
                         listener.onFailure(new RuntimeException("One or more structured messages failed to save"));
                     } else {
+                        nextMessageId.set(startId + messages.size());
                         listener.onResponse(null);
                     }
                 }

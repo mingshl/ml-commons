@@ -5,12 +5,11 @@
 
 package org.opensearch.ml.engine.algorithms.agent;
 
-import java.util.List;
 import java.util.Map;
 
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.ml.common.agent.MLAgent;
-import org.opensearch.ml.common.input.execute.agent.Message;
+import org.opensearch.ml.common.memory.Memory;
 import org.opensearch.transport.TransportChannel;
 
 /**
@@ -38,8 +37,22 @@ public interface MLAgentRunner {
     void run(MLAgent mlAgent, Map<String, String> params, ActionListener<Object> listener, TransportChannel channel);
 
     /**
-     * Set structured input messages to be used by the runner.
-     * @param inputMessages the structured input messages, may be null
+     * Function interface to execute agent with an executor-provided memory instance.
+     * For unified interface, the executor skips parent interaction creation and passes its
+     * memory instance so the runner reuses it instead of creating its own.
+     * @param mlAgent
+     * @param params
+     * @param listener
+     * @param channel
+     * @param memory executor-provided memory instance (may be null)
      */
-    default void setInputMessages(List<Message> inputMessages) {}
+    default void run(
+        MLAgent mlAgent,
+        Map<String, String> params,
+        ActionListener<Object> listener,
+        TransportChannel channel,
+        Memory memory
+    ) {
+        run(mlAgent, params, listener, channel);
+    }
 }

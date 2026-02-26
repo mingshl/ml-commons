@@ -56,13 +56,10 @@ public interface Memory<T extends Message, R, S> {
      * Save structured messages to memory.
      *
      * @param messages List of AgentInput messages to save (may be null or empty)
-     * @param startMessageId Starting message ID for ordering; if null, the implementation
-     *                       queries for the current max message_id and continues from there
      * @param listener Action listener for save completion
      */
     default void saveStructuredMessages(
         List<org.opensearch.ml.common.input.execute.agent.Message> messages,
-        Integer startMessageId,
         ActionListener<Void> listener
     ) {
         listener.onFailure(new UnsupportedOperationException("saveStructuredMessages is not supported by " + getType()));

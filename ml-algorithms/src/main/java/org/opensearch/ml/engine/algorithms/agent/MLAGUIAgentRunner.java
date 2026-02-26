@@ -47,7 +47,6 @@ public class MLAGUIAgentRunner implements MLAgentRunner {
     private final SdkClient sdkClient;
     private final Encryptor encryptor;
     private final HookRegistry hookRegistry;
-    private List<Message> inputMessages;
 
     public MLAGUIAgentRunner(
         Client client,
@@ -85,12 +84,12 @@ public class MLAGUIAgentRunner implements MLAgentRunner {
     }
 
     @Override
-    public void setInputMessages(List<Message> inputMessages) {
-        this.inputMessages = inputMessages;
+    public void run(MLAgent mlAgent, Map<String, String> params, ActionListener<Object> listener, TransportChannel channel) {
+        run(mlAgent, params, listener, channel, null);
     }
 
     @Override
-    public void run(MLAgent mlAgent, Map<String, String> params, ActionListener<Object> listener, TransportChannel channel) {
+    public void run(MLAgent mlAgent, Map<String, String> params, ActionListener<Object> listener, TransportChannel channel, Memory memory) {
         try {
             String llmInterface = params.get(LLM_INTERFACE);
             if (llmInterface == null && mlAgent.getParameters() != null) {
@@ -121,10 +120,9 @@ public class MLAGUIAgentRunner implements MLAgentRunner {
                 encryptor,
                 hookRegistry
             );
-            conversationalRunner.setInputMessages(inputMessages);
 
             // Execute with streaming - events are generated in RestMLExecuteStreamAction
-            conversationalRunner.run(mlAgent, params, listener, channel);
+            conversationalRunner.run(mlAgent, params, listener, channel, memory);
 
         } catch (Exception e) {
             log.error("Error starting AG-UI agent execution", e);

@@ -15,6 +15,7 @@ import static org.opensearch.ml.common.MLTask.RESPONSE_FIELD;
 import static org.opensearch.ml.common.MLTask.STATE_FIELD;
 import static org.opensearch.ml.common.MLTask.TASK_ID_FIELD;
 import static org.opensearch.ml.common.agent.MLAgent.CONTEXT_MANAGEMENT_NAME_FIELD;
+import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_PARAM_CONTEXT;
 import static org.opensearch.ml.common.agui.AGUIConstants.AGUI_PARAM_LOAD_CHAT_HISTORY;
 import static org.opensearch.ml.common.memorycontainer.MemoryContainerConstants.MEMORY_CONTAINER_ID_FIELD;
 import static org.opensearch.ml.common.output.model.ModelTensorOutput.INFERENCE_RESULT_FIELD;
@@ -23,7 +24,9 @@ import static org.opensearch.ml.common.settings.MLCommonsSettings.ML_COMMONS_REM
 import static org.opensearch.ml.common.utils.MLTaskUtils.updateMLTaskDirectly;
 import static org.opensearch.ml.engine.algorithms.agent.AgentUtils.MEMORY_CONFIGURATION_FIELD;
 import static org.opensearch.ml.engine.algorithms.agent.AgentUtils.createMemoryParams;
+import static org.opensearch.ml.engine.algorithms.agent.AgentUtils.getMessageHistoryLimit;
 import static org.opensearch.ml.engine.algorithms.agent.AgentUtils.sanitizeForLogging;
+import static org.opensearch.ml.engine.algorithms.agent.MLChatAgentRunner.NEW_CHAT_HISTORY;
 
 import java.security.AccessController;
 import java.security.PrivilegedActionException;
@@ -60,6 +63,7 @@ import org.opensearch.ml.common.MLTaskState;
 import org.opensearch.ml.common.MLTaskType;
 import org.opensearch.ml.common.agent.MLAgent;
 import org.opensearch.ml.common.agent.MLMemorySpec;
+import org.opensearch.ml.common.agui.AGUIInputConverter;
 import org.opensearch.ml.common.contextmanager.ContextManagementTemplate;
 import org.opensearch.ml.common.contextmanager.ContextManager;
 import org.opensearch.ml.common.contextmanager.ContextManagerHookProvider;
@@ -69,6 +73,8 @@ import org.opensearch.ml.common.input.Input;
 import org.opensearch.ml.common.input.execute.agent.AgentInput;
 import org.opensearch.ml.common.input.execute.agent.AgentInputProcessor;
 import org.opensearch.ml.common.input.execute.agent.AgentMLInput;
+import org.opensearch.ml.common.input.execute.agent.ContentBlock;
+import org.opensearch.ml.common.input.execute.agent.ContentType;
 import org.opensearch.ml.common.input.execute.agent.InputType;
 import org.opensearch.ml.common.input.execute.agent.Message;
 import org.opensearch.ml.common.memory.Memory;
@@ -102,6 +108,8 @@ import org.opensearch.transport.client.Client;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonParser;
 
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -513,16 +521,35 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
         String question = inputDataSet.getParameters().get(QUESTION);
         String regenerateInteractionId = inputDataSet.getParameters().get(REGENERATE_INTERACTION_ID);
 
-        // Extract structured input messages to pass directly to the runner
-        @SuppressWarnings("unchecked")
-        List<Message> inputMessages = (agentMLInput.getAgentInput() != null
-            && agentMLInput.getAgentInput().getInputType() == InputType.MESSAGES)
-                ? (List<Message>) agentMLInput.getAgentInput().getInput()
-                : null;
+        // Convert all unified interface input types to List<Message>
+        List<Message> inputMessages = null;
+        if (agentMLInput.getAgentInput() != null) {
+            InputType inputType = agentMLInput.getAgentInput().getInputType();
+            switch (inputType) {
+                case MESSAGES:
+                    @SuppressWarnings("unchecked")
+                    List<Message> messages = (List<Message>) agentMLInput.getAgentInput().getInput();
+                    inputMessages = messages;
+                    break;
+                case CONTENT_BLOCKS:
+                    @SuppressWarnings("unchecked")
+                    List<ContentBlock> blocks = (List<ContentBlock>) agentMLInput.getAgentInput().getInput();
+                    inputMessages = List.of(new Message("user", blocks));
+                    break;
+                case TEXT:
+                    String text = (String) agentMLInput.getAgentInput().getInput();
+                    ContentBlock textBlock = new ContentBlock();
+                    textBlock.setType(ContentType.TEXT);
+                    textBlock.setText(text);
+                    inputMessages = List.of(new Message("user", List.of(textBlock)));
+                    break;
+            }
+        }
 
-        // For AGUI history-load requests, skip parent interaction creation
+        // For unified interface requests with structured message support, or AGUI history-load,
+        // skip parent interaction creation. The pair-based memory format handles ordering internally.
         MLAgentType agentType = MLAgentType.from(mlAgent.getType());
-        if (agentType == MLAgentType.AG_UI && inputMessages == null) {
+        if ((inputMessages != null && supportsStructuredMessages(mlAgent)) || (agentType == MLAgentType.AG_UI && inputMessages == null)) {
             executeAgent(
                 inputDataSet,
                 tenantId,
@@ -730,6 +757,77 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
         }
     }
 
+    /**
+     * Performs initial memory operations for unified interface agents:
+     * 1. Gets structured message history
+     * 2. Saves input messages
+     * 3. Appends AGUI context if applicable
+     * 4. Formats history for the LLM
+     * 5. Invokes continuation when done
+     */
+    @VisibleForTesting
+    void performInitialMemoryOperations(
+        Memory memory,
+        List<Message> inputMessages,
+        Map<String, String> params,
+        MLAgent mlAgent,
+        ActionListener<?> listener,
+        Runnable continuation
+    ) {
+        int messageHistoryLimit = getMessageHistoryLimit(params);
+
+        memory.getStructuredMessages(ActionListener.wrap(result -> {
+            @SuppressWarnings("unchecked")
+            List<Message> allMessages = (List<Message>) result;
+
+            // Apply history limit
+            List<Message> history = messageHistoryLimit > 0 && allMessages.size() > messageHistoryLimit
+                ? allMessages.subList(allMessages.size() - messageHistoryLimit, allMessages.size())
+                : allMessages;
+
+            // Save input messages — memory auto-resolves the next message ID
+            memory.saveStructuredMessages(inputMessages, ActionListener.wrap(v -> {
+                try {
+                    ModelProvider modelProvider = ModelProviderFactory.getProvider(mlAgent.getModel().getModelProvider());
+                    MLAgentType agentType = MLAgentType.from(mlAgent.getType());
+
+                    // Append AGUI context to current input for this LLM call (not persisted in memory)
+                    if (agentType == MLAgentType.AG_UI) {
+                        String contextJson = params.get(AGUI_PARAM_CONTEXT);
+                        if (contextJson != null) {
+                            JsonArray contextArray = JsonParser.parseString(contextJson).getAsJsonArray();
+                            AGUIInputConverter.appendContextToLatestUserMessage(inputMessages, contextArray);
+                            // Re-format current input with context included
+                            String updatedBody = modelProvider.mapMessages(inputMessages, agentType).get("body");
+                            if (updatedBody != null) {
+                                params.put("body", updatedBody);
+                            }
+                        }
+                    }
+
+                    if (!history.isEmpty()) {
+                        // Format history messages using the model provider for API-compatible output
+                        String formattedHistory = modelProvider.mapMessages(history, agentType).get("body");
+                        if (formattedHistory != null && !formattedHistory.isEmpty()) {
+                            params.put(NEW_CHAT_HISTORY, formattedHistory + ", ");
+                        }
+                    }
+
+                    continuation.run();
+                } catch (Exception ex) {
+                    log.error("Failed during memory post-processing", ex);
+                    listener.onFailure(ex);
+                }
+            }, e -> {
+                log.error("Failed to save input messages", e);
+                listener.onFailure(e);
+            }));
+        }, e -> {
+            log.error("Failed to get history", e);
+            listener.onFailure(e);
+        }));
+    }
+
     private void executeAgent(
         RemoteInferenceInputDataSet inputDataSet,
         String tenantId,
@@ -759,8 +857,9 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
         }
 
         MLAgentRunner mlAgentRunner = getAgentRunner(mlAgent, hookRegistry);
-        mlAgentRunner.setInputMessages(inputMessages);
         String parentInteractionId = inputDataSet.getParameters().get(PARENT_INTERACTION_ID);
+
+        boolean usesUnifiedInterface = "true".equals(inputDataSet.getParameters().get(USES_UNIFIED_INTERFACE));
 
         // If async is true, index ML task and return the taskID. Also add memoryID to
         // the task if it exists
@@ -796,7 +895,20 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
                 );
                 inputDataSet.getParameters().put(TASK_ID_FIELD, taskId);
                 try {
-                    mlAgentRunner.run(mlAgent, inputDataSet.getParameters(), agentActionListener, channel);
+                    if (usesUnifiedInterface && inputMessages != null && memory != null && supportsStructuredMessages(mlAgent)) {
+                        performInitialMemoryOperations(
+                            memory,
+                            inputMessages,
+                            inputDataSet.getParameters(),
+                            mlAgent,
+                            agentActionListener,
+                            () -> {
+                                mlAgentRunner.run(mlAgent, inputDataSet.getParameters(), agentActionListener, channel, memory);
+                            }
+                        );
+                    } else {
+                        mlAgentRunner.run(mlAgent, inputDataSet.getParameters(), agentActionListener, channel);
+                    }
                 } catch (Exception e) {
                     log.error("Failed to run agent", e);
                     agentActionListener.onFailure(e);
@@ -815,7 +927,20 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
                 memory
             );
             try {
-                mlAgentRunner.run(mlAgent, inputDataSet.getParameters(), agentActionListener, channel);
+                if (usesUnifiedInterface && inputMessages != null && memory != null && supportsStructuredMessages(mlAgent)) {
+                    performInitialMemoryOperations(
+                        memory,
+                        inputMessages,
+                        inputDataSet.getParameters(),
+                        mlAgent,
+                        agentActionListener,
+                        () -> {
+                            mlAgentRunner.run(mlAgent, inputDataSet.getParameters(), agentActionListener, channel, memory);
+                        }
+                    );
+                } else {
+                    mlAgentRunner.run(mlAgent, inputDataSet.getParameters(), agentActionListener, channel);
+                }
             } catch (Exception e) {
                 log.error("Failed to run agent", e);
                 agentActionListener.onFailure(e);
@@ -1071,8 +1196,8 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
             throw new IllegalArgumentException("Messages input is not supported for Plan Execute and Reflect Agent.");
         }
 
-        // If legacy question input is provided, parse to new standard input
-        if (agentMLInput.getInputDataset() != null) {
+        // If legacy question input is provided and no structured input exists, parse to new standard input
+        if (agentMLInput.getAgentInput() == null && agentMLInput.getInputDataset() != null) {
             RemoteInferenceInputDataSet remoteInferenceInputDataSet = (RemoteInferenceInputDataSet) agentMLInput.getInputDataset();
             if (remoteInferenceInputDataSet.getParameters().containsKey(QUESTION)) {
                 AgentInput standardInput = new AgentInput(remoteInferenceInputDataSet.getParameters().get(QUESTION));
@@ -1156,6 +1281,12 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
         }
 
         return mlAgent;
+    }
+
+    @VisibleForTesting
+    boolean supportsStructuredMessages(MLAgent mlAgent) {
+        MLAgentType agentType = MLAgentType.from(mlAgent.getType());
+        return agentType == MLAgentType.CONVERSATIONAL || agentType == MLAgentType.AG_UI;
     }
 
 }

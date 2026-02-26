@@ -369,7 +369,7 @@ public class RemoteAgenticConversationMemoryTest {
             assertTrue(e.getMessage().contains("Memory container ID is not configured"));
         });
 
-        memory.saveStructuredMessages(List.of(message), 0, testListener);
+        memory.saveStructuredMessages(List.of(message), testListener);
     }
 
     @Test
@@ -380,7 +380,7 @@ public class RemoteAgenticConversationMemoryTest {
             // Expected - null messages should complete successfully
         }, e -> { throw new RuntimeException("Should not fail with null messages", e); });
 
-        memory.saveStructuredMessages(null, null, testListener);
+        memory.saveStructuredMessages(null, testListener);
     }
 
     @Test
@@ -391,7 +391,7 @@ public class RemoteAgenticConversationMemoryTest {
             // Expected - empty messages should complete successfully
         }, e -> { throw new RuntimeException("Should not fail with empty messages", e); });
 
-        memory.saveStructuredMessages(List.of(), null, testListener);
+        memory.saveStructuredMessages(List.of(), testListener);
     }
 
     // Helper methods
