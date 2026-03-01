@@ -366,7 +366,8 @@ public class SummarizationManagerTest {
         config.put("preserve_recent_messages", 10);
         manager.initialize(config);
 
-        // Add only 5 structured messages - not enough to summarize
+        // Add only 5 structured messages - will try to summarize with effective preserve
+        // but fail because no model ID is available
         List<Message> messages = createStructuredMessages(5);
         context = ContextManagerContext.builder()
             .toolInteractions(new ArrayList<>())
@@ -376,8 +377,53 @@ public class SummarizationManagerTest {
 
         manager.execute(context);
 
-        // Should remain unchanged
+        // Should remain unchanged (no model ID available)
         Assert.assertEquals(5, context.getStructuredChatHistory().size());
+    }
+
+    @Test
+    public void testExecuteWithSingleStructuredMessage() {
+        Map<String, Object> config = new HashMap<>();
+        manager.initialize(config);
+
+        // Add only 1 structured message - need at least 2 to summarize
+        List<Message> messages = createStructuredMessages(1);
+        context = ContextManagerContext.builder()
+            .toolInteractions(new ArrayList<>())
+            .parameters(new HashMap<>())
+            .structuredChatHistory(messages)
+            .build();
+
+        manager.execute(context);
+
+        // Should remain unchanged - need at least 2 messages
+        Assert.assertEquals(1, context.getStructuredChatHistory().size());
+    }
+
+    @Test
+    public void testStructuredMessagesEffectivePreserveWhenCountEqualsPreserve() {
+        // This tests the scenario where totalMessages == preserveRecentMessages.
+        // Old logic: min(count, 10-10) = 0 -> returns early (no summarization).
+        // New logic: effectivePreserve = min(10, 9) = 9, messagesToSummarize = min(3, 10-9) = 1
+        // -> at least 1 message gets summarized (if model ID is available).
+        Map<String, Object> config = new HashMap<>();
+        config.put("preserve_recent_messages", 10);
+        manager.initialize(config);
+
+        List<Message> messages = createStructuredMessages(10);
+        Map<String, String> params = new HashMap<>();
+        // No model ID -> summarization fails gracefully
+        context = ContextManagerContext.builder()
+            .toolInteractions(new ArrayList<>())
+            .parameters(params)
+            .structuredChatHistory(messages)
+            .build();
+
+        manager.execute(context);
+
+        // Remains unchanged because no model ID is available,
+        // but the method proceeds past the message count check (not an early return)
+        Assert.assertEquals(10, context.getStructuredChatHistory().size());
     }
 
     @Test

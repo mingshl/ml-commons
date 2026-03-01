@@ -78,6 +78,7 @@ import org.opensearch.ml.common.input.execute.agent.ContentType;
 import org.opensearch.ml.common.input.execute.agent.InputType;
 import org.opensearch.ml.common.input.execute.agent.Message;
 import org.opensearch.ml.common.memory.Memory;
+import org.opensearch.ml.engine.agents.AgentContextUtil;
 import org.opensearch.ml.common.model.ModelProvider;
 import org.opensearch.ml.common.model.ModelProviderFactory;
 import org.opensearch.ml.common.output.MLTaskOutput;
@@ -760,10 +761,11 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
     /**
      * Performs initial memory operations for unified interface agents:
      * 1. Gets structured message history
-     * 2. Saves input messages
-     * 3. Appends AGUI context if applicable
-     * 4. Formats history for the LLM
-     * 5. Invokes continuation when done
+     * 2. Applies POST_MEMORY hook for context management (summarization, sliding window, etc.)
+     * 3. Saves input messages
+     * 4. Appends AGUI context if applicable
+     * 5. Formats history for the LLM
+     * 6. Invokes continuation when done
      */
     @VisibleForTesting
     void performInitialMemoryOperations(
@@ -772,7 +774,8 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
         Map<String, String> params,
         MLAgent mlAgent,
         ActionListener<?> listener,
-        Runnable continuation
+        Runnable continuation,
+        HookRegistry hookRegistry
     ) {
         int messageHistoryLimit = getMessageHistoryLimit(params);
 
@@ -781,9 +784,20 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
             List<Message> allMessages = (List<Message>) result;
 
             // Apply history limit
-            List<Message> history = messageHistoryLimit > 0 && allMessages.size() > messageHistoryLimit
+            List<Message> limitedHistory = messageHistoryLimit > 0 && allMessages.size() > messageHistoryLimit
                 ? allMessages.subList(allMessages.size() - messageHistoryLimit, allMessages.size())
                 : allMessages;
+
+            // Ensure _llm_model_id is available for context managers (e.g. SummarizationManager).
+            // Prefer getLlm() (registered connector model) over getModel() (raw provider model ID).
+            if (mlAgent.getLlm() != null && mlAgent.getLlm().getModelId() != null) {
+                params.putIfAbsent("_llm_model_id", mlAgent.getLlm().getModelId());
+            } else if (mlAgent.getModel() != null && mlAgent.getModel().getModelId() != null) {
+                params.putIfAbsent("_llm_model_id", mlAgent.getModel().getModelId());
+            }
+
+            // Emit POST_MEMORY hook to allow context managers to modify retrieved structured history
+            List<Message> history = processPostStructuredMemoryHook(params, limitedHistory, memory, hookRegistry);
 
             // Save input messages — memory auto-resolves the next message ID
             memory.saveStructuredMessages(inputMessages, ActionListener.wrap(v -> {
@@ -904,7 +918,8 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
                             agentActionListener,
                             () -> {
                                 mlAgentRunner.run(mlAgent, inputDataSet.getParameters(), agentActionListener, channel, memory);
-                            }
+                            },
+                            hookRegistry
                         );
                     } else {
                         mlAgentRunner.run(mlAgent, inputDataSet.getParameters(), agentActionListener, channel);
@@ -936,7 +951,8 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
                         agentActionListener,
                         () -> {
                             mlAgentRunner.run(mlAgent, inputDataSet.getParameters(), agentActionListener, channel, memory);
-                        }
+                        },
+                        hookRegistry
                     );
                 } else {
                     mlAgentRunner.run(mlAgent, inputDataSet.getParameters(), agentActionListener, channel);
@@ -1287,6 +1303,38 @@ public class MLAgentExecutor implements Executable, SettingsChangeListener {
     boolean supportsStructuredMessages(MLAgent mlAgent) {
         MLAgentType agentType = MLAgentType.from(mlAgent.getType());
         return agentType == MLAgentType.CONVERSATIONAL || agentType == MLAgentType.AG_UI;
+    }
+
+    /**
+     * Process POST_MEMORY hook for structured messages and return the (potentially modified) list.
+     * Context managers like SlidingWindowManager or SummarizationManager can modify
+     * the retrieved structured chat history before it is formatted into the prompt.
+     */
+    private List<Message> processPostStructuredMemoryHook(
+        Map<String, String> params,
+        List<Message> retrievedStructuredHistory,
+        Memory memory,
+        HookRegistry hookRegistry
+    ) {
+        log.debug("processPostStructuredMemoryHook called with {} messages, hookRegistry: {}", 
+            retrievedStructuredHistory.size(), hookRegistry != null ? "present" : "null");
+        
+        if (hookRegistry != null && !retrievedStructuredHistory.isEmpty()) {
+            org.opensearch.ml.common.contextmanager.ContextManagerContext contextAfterEvent = AgentContextUtil
+                .emitPostStructuredMemoryHook(params, retrievedStructuredHistory, null, memory, hookRegistry);
+
+            log.debug("POST_MEMORY hook emitted, estimated token count: {}", contextAfterEvent.getEstimatedTokenCount());
+
+            List<Message> updatedHistory = contextAfterEvent.getStructuredChatHistory();
+            if (updatedHistory != null && !updatedHistory.equals(retrievedStructuredHistory)) {
+                log.info("POST_MEMORY hook modified structured history: {} -> {} messages", 
+                    retrievedStructuredHistory.size(), updatedHistory.size());
+                return updatedHistory;
+            } else {
+                log.debug("POST_MEMORY hook did not modify structured history");
+            }
+        }
+        return retrievedStructuredHistory;
     }
 
 }

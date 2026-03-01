@@ -171,8 +171,8 @@ public class SlidingWindowManager implements ContextManager {
             return;
         }
 
-        // Keep the most recent messages
-        int startIndex = originalSize - maxMessages;
+        // Find safe start point to avoid breaking tool-call/tool-result pairs
+        int startIndex = ContextManagerUtils.findSafeCutPointForStructuredMessages(structuredHistory, originalSize - maxMessages);
         List<Message> updatedHistory = new ArrayList<>(structuredHistory.subList(startIndex, originalSize));
 
         context.setStructuredChatHistory(updatedHistory);

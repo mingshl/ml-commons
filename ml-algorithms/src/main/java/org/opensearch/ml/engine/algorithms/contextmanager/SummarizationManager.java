@@ -84,6 +84,8 @@ public class SummarizationManager implements ContextManager {
 
     @Override
     public void initialize(Map<String, Object> config) {
+        log.info("SummarizationManager.initialize called with config keys: {}", config != null ? config.keySet() : "null");
+        
         this.summaryRatio = parseDoubleConfig(config, SUMMARY_RATIO_KEY, DEFAULT_SUMMARY_RATIO);
         this.preserveRecentMessages = parseIntegerConfig(config, PRESERVE_RECENT_MESSAGES_KEY, DEFAULT_PRESERVE_RECENT_MESSAGES);
         this.summarizationModelId = (String) config.get(SUMMARIZATION_MODEL_ID_KEY);
@@ -98,25 +100,34 @@ public class SummarizationManager implements ContextManager {
         // Initialize activation rules from config
         @SuppressWarnings("unchecked")
         Map<String, Object> activationConfig = (Map<String, Object>) config.get("activation");
+        log.info("Activation config from manager config: {}", activationConfig);
         this.activationRules = ActivationRuleFactory.createRules(activationConfig);
+        log.info("Created {} activation rules", activationRules != null ? activationRules.size() : 0);
 
         log.info("Initialized SummarizationManager: summaryRatio={}, preserveRecentMessages={}", summaryRatio, preserveRecentMessages);
     }
 
     @Override
     public boolean shouldActivate(ContextManagerContext context) {
+        int tokenCount = context.getEstimatedTokenCount();
+        log.info("SummarizationManager.shouldActivate: tokenCount={}, activationRules={}", 
+            tokenCount, activationRules != null ? activationRules.size() : 0);
+        
         if (activationRules == null || activationRules.isEmpty()) {
+            log.info("No activation rules configured, manager will always activate");
             return true;
         }
 
         for (ActivationRule rule : activationRules) {
-            if (!rule.evaluate(context)) {
-                log.debug("Activation rule not satisfied: {}", rule.getDescription());
+            boolean satisfied = rule.evaluate(context);
+            log.info("Activation rule '{}' evaluation: {}", rule.getDescription(), satisfied);
+            if (!satisfied) {
+                log.info("Activation rule not satisfied: {}", rule.getDescription());
                 return false;
             }
         }
 
-        log.debug("All activation rules satisfied, manager will execute");
+        log.info("All activation rules satisfied, SummarizationManager will execute");
         return true;
     }
 
@@ -176,24 +187,48 @@ public class SummarizationManager implements ContextManager {
         List<Message> structuredHistory = context.getStructuredChatHistory();
 
         if (structuredHistory == null || structuredHistory.isEmpty()) {
+            log.debug("No structured chat history to summarize");
             return;
         }
 
         int totalMessages = structuredHistory.size();
+        log.info("Structured chat history: {} messages, preserveRecentMessages={}, summaryRatio={}",
+            totalMessages, preserveRecentMessages, summaryRatio);
+
+        if (totalMessages < 2) {
+            log.debug("Need at least 2 structured messages to summarize, have {}", totalMessages);
+            return;
+        }
 
         // Calculate how many messages to summarize
         int messagesToSummarizeCount = Math.max(1, (int) (totalMessages * summaryRatio));
 
-        // Ensure we don't summarize recent messages
-        messagesToSummarizeCount = min(messagesToSummarizeCount, totalMessages - preserveRecentMessages);
+        // For structured messages, each message can be very long (unlike tool interactions).
+        // Cap preserveRecentMessages at totalMessages - 1 so we always summarize at least
+        // the oldest message when activation rules are satisfied.
+        int effectivePreserve = Math.max(1, min(preserveRecentMessages, totalMessages - 1));
+        messagesToSummarizeCount = min(messagesToSummarizeCount, totalMessages - effectivePreserve);
 
         if (messagesToSummarizeCount <= 0) {
+            log.info("Not enough structured messages to summarize: total={}, effectivePreserve={}",
+                totalMessages, effectivePreserve);
             return;
         }
 
+        // Find a safe cut point that doesn't break assistant-toolCall / tool-result pairs
+        int safeCutPoint = ContextManagerUtils.findSafeCutPointForStructuredMessages(structuredHistory, messagesToSummarizeCount);
+
+        if (safeCutPoint <= 0 || safeCutPoint >= totalMessages) {
+            log.info("No safe cut point found for structured messages: target={}, safe={}", messagesToSummarizeCount, safeCutPoint);
+            return;
+        }
+
+        log.info("Will summarize {} of {} structured messages (safe cut point: {}), preserving {} recent messages",
+            safeCutPoint, totalMessages, safeCutPoint, totalMessages - safeCutPoint);
+
         // Extract text from older messages to summarize
-        List<Message> messagesToSummarize = structuredHistory.subList(0, messagesToSummarizeCount);
-        List<Message> remainingMessages = new ArrayList<>(structuredHistory.subList(messagesToSummarizeCount, totalMessages));
+        List<Message> messagesToSummarize = structuredHistory.subList(0, safeCutPoint);
+        List<Message> remainingMessages = new ArrayList<>(structuredHistory.subList(safeCutPoint, totalMessages));
 
         StringBuilder textToSummarize = new StringBuilder();
         for (Message message : messagesToSummarize) {
@@ -218,10 +253,17 @@ public class SummarizationManager implements ContextManager {
             return;
         }
 
-        // Prepare summarization parameters
+        // Prepare summarization parameters.
+        // Format as structured body for connector templates that use ${parameters.body}
+        String userPromptText = "Help summarize the following:\n" + textToSummarize.toString();
+        String escapedPrompt = processTextDoc(userPromptText);
+        String body = "{\"role\":\"user\",\"content\":[{\"text\":\"" + escapedPrompt + "\"}]}";
+
         Map<String, String> summarizationParameters = new HashMap<>();
-        summarizationParameters.put("prompt", "Help summarize the following" + StringUtils.toJson(textToSummarize.toString()));
+        summarizationParameters.put("body", body);
         summarizationParameters.put("system_prompt", summarizationSystemPrompt);
+        // Also set prompt for connectors that use ${parameters.prompt} instead of body
+        summarizationParameters.put("prompt", userPromptText);
 
         executeSummarizationForStructuredHistory(context, modelId, summarizationParameters, remainingMessages);
     }
@@ -285,7 +327,18 @@ public class SummarizationManager implements ContextManager {
                 latch.countDown();
             });
 
-            client.execute(MLPredictionTaskAction.INSTANCE, request, listener);
+            // Dispatch client call on generic thread pool to avoid transport thread
+            // deadlock (blocking current thread with latch.await while the prediction
+            // callback needs a transport thread to fire). OpenSearch's thread pool
+            // automatically preserves the thread context (including security credentials).
+            client.threadPool().generic().execute(() -> {
+                try {
+                    client.execute(MLPredictionTaskAction.INSTANCE, request, listener);
+                } catch (Exception e) {
+                    log.warn("Failed to dispatch summarization request: {}", e.getMessage());
+                    latch.countDown();
+                }
+            });
 
             // Wait for summarization to complete (30 second timeout)
             boolean finished = latch.await(30, TimeUnit.SECONDS);
@@ -306,6 +359,7 @@ public class SummarizationManager implements ContextManager {
         Map<String, String> summarizationParameters,
         List<Message> remainingMessages
     ) {
+        log.info("Starting structured history summarization with model: {}", modelId);
         CountDownLatch latch = new CountDownLatch(1);
         java.util.concurrent.atomic.AtomicBoolean timedOut = new java.util.concurrent.atomic.AtomicBoolean(false);
 
@@ -323,10 +377,12 @@ public class SummarizationManager implements ContextManager {
             ActionListener<MLTaskResponse> listener = ActionListener.wrap(response -> {
                 try {
                     if (timedOut.get()) {
+                        log.warn("Structured history summarization response arrived after timeout, discarding");
                         return;
                     }
                     String summary = extractSummaryFromResponse(response, context);
                     if (summary != null) {
+                        log.info("Structured history summarization LLM call succeeded, summary length: {}", summary.length());
                         processStructuredSummarizationResult(context, summary, remainingMessages);
                     } else {
                         log.warn("Summary extraction failed for structured history, keeping original messages");
@@ -343,13 +399,27 @@ public class SummarizationManager implements ContextManager {
                 latch.countDown();
             });
 
-            client.execute(MLPredictionTaskAction.INSTANCE, request, listener);
+            // Dispatch client call on generic thread pool to avoid transport thread
+            // deadlock (blocking current thread with latch.await while the prediction
+            // callback needs a transport thread to fire). OpenSearch's thread pool
+            // automatically preserves the thread context (including security credentials).
+            client.threadPool().generic().execute(() -> {
+                try {
+                    client.execute(MLPredictionTaskAction.INSTANCE, request, listener);
+                } catch (Exception e) {
+                    log.warn("Failed to dispatch structured history summarization request: {}", e.getMessage());
+                    latch.countDown();
+                }
+            });
+            log.info("Structured history summarization request dispatched, waiting for response...");
 
             // Wait for summarization to complete (30 second timeout)
             boolean finished = latch.await(30, TimeUnit.SECONDS);
             if (!finished) {
                 timedOut.set(true);
                 log.warn("Structured history summarization timed out after 30s; skipping late results");
+            } else {
+                log.info("Structured history summarization latch completed");
             }
 
         } catch (Exception e) {

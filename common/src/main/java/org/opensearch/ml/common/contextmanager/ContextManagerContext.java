@@ -85,12 +85,14 @@ public class ContextManagerContext {
 
         // Estimate tokens for system prompt
         if (systemPrompt != null) {
-            tokenCount += estimateTokens(systemPrompt);
+            int systemTokens = estimateTokens(systemPrompt);
+            tokenCount += systemTokens;
         }
 
         // Estimate tokens for user prompt
         if (userPrompt != null) {
-            tokenCount += estimateTokens(userPrompt);
+            int userTokens = estimateTokens(userPrompt);
+            tokenCount += userTokens;
         }
 
         // Estimate tokens for chat history
@@ -105,15 +107,17 @@ public class ContextManagerContext {
 
         // Estimate tokens for structured chat history
         if (structuredChatHistory != null) {
+            int structuredTokens = 0;
             for (Message message : structuredChatHistory) {
                 if (message.getContent() != null) {
                     for (ContentBlock block : message.getContent()) {
                         if (block.getText() != null) {
-                            tokenCount += estimateTokens(block.getText());
+                            structuredTokens += estimateTokens(block.getText());
                         }
                     }
                 }
             }
+            tokenCount += structuredTokens;
         }
 
         // Estimate tokens for tool interactions

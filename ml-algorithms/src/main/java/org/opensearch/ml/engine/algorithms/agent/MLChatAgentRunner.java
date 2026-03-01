@@ -202,10 +202,6 @@ public class MLChatAgentRunner implements MLAgentRunner {
         this.hookRegistry = hookRegistry;
     }
 
-    public void setInputMessages(List<Message> inputMessages) {
-        this.inputMessages = inputMessages;
-    }
-
     @Override
     public void run(
         MLAgent mlAgent,
@@ -286,6 +282,15 @@ public class MLChatAgentRunner implements MLAgentRunner {
         }
         memoryFactory.create(memoryParams, ActionListener.wrap(memory -> {
             // TODO: call runAgent directly if messageHistoryLimit == 0
+
+            // Ensure _llm_model_id is available for context managers (e.g. SummarizationManager).
+            // Prefer getLlm() (registered connector model) over getModel() (raw provider model ID).
+            if (mlAgent.getLlm() != null && mlAgent.getLlm().getModelId() != null) {
+                params.putIfAbsent("_llm_model_id", mlAgent.getLlm().getModelId());
+            } else if (mlAgent.getModel() != null && mlAgent.getModel().getModelId() != null) {
+                params.putIfAbsent("_llm_model_id", mlAgent.getModel().getModelId());
+            }
+
             memory.getMessages(messageHistoryLimit, ActionListener.<List<Interaction>>wrap(r -> {
                 // Emit POST_MEMORY hook to allow context managers to modify retrieved history
                 List<Interaction> processedHistory = processPostMemoryHook(params, r, memory, hookRegistry);
