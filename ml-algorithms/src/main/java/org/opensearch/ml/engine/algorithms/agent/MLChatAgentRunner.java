@@ -200,21 +200,17 @@ public class MLChatAgentRunner implements MLAgentRunner {
     }
 
     @Override
-    public void run(MLAgent mlAgent, Map<String, String> params, ActionListener<Object> listener, TransportChannel channel, Memory memory) {
-        runWithMemory(mlAgent, params, listener, channel, memory);
+    public void run(MLAgent mlAgent, Map<String, String> params, ActionListener<Object> listener, TransportChannel channel) {
+        run(mlAgent, params, listener, channel, null);
     }
 
     @Override
-    public void run(MLAgent mlAgent, Map<String, String> inputParams, ActionListener<Object> listener, TransportChannel channel) {
-        runWithMemory(mlAgent, inputParams, listener, channel, null);
-    }
-
-    private void runWithMemory(
+    public void run(
         MLAgent mlAgent,
         Map<String, String> inputParams,
         ActionListener<Object> listener,
         TransportChannel channel,
-        Memory callerMemory
+        Memory executorMemory
     ) {
         Map<String, String> params = new HashMap<>();
         if (mlAgent.getParameters() != null) {
@@ -238,7 +234,7 @@ public class MLChatAgentRunner implements MLAgentRunner {
         // Unified interface: executor already handled memory setup and skipped parent interaction.
         boolean usesUnifiedInterface = Boolean.parseBoolean(params.getOrDefault(MLAgentExecutor.USES_UNIFIED_INTERFACE, "false"));
         if (usesUnifiedInterface) {
-            runAgent(mlAgent, params, listener, callerMemory, functionCalling);
+            runAgent(mlAgent, params, listener, executorMemory, functionCalling);
             return;
         }
 
@@ -455,7 +451,8 @@ public class MLChatAgentRunner implements MLAgentRunner {
         String question = tmpParameters.get(MLAgentExecutor.QUESTION);
         String parentInteractionId = tmpParameters.get(MLAgentExecutor.PARENT_INTERACTION_ID);
         boolean verbose = Boolean.parseBoolean(tmpParameters.getOrDefault(VERBOSE, "false"));
-        boolean traceDisabled = tmpParameters.containsKey(DISABLE_TRACE) && Boolean.parseBoolean(tmpParameters.get(DISABLE_TRACE));
+        boolean traceDisabled = usesUnifiedInterface
+            || (tmpParameters.containsKey(DISABLE_TRACE) && Boolean.parseBoolean(tmpParameters.get(DISABLE_TRACE)));
 
         // Trace number
         AtomicInteger traceNumber = new AtomicInteger(0);

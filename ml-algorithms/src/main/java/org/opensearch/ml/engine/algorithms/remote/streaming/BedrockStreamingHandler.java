@@ -433,6 +433,12 @@ public class BedrockStreamingHandler extends BaseStreamingHandler {
         return event.sdkEventType() == ConverseStreamOutput.EventType.CONTENT_BLOCK_STOP;
     }
 
+    /**
+     * Create a Bedrock-formatted final answer response that parseLLMOutput can extract
+     * the final answer from. Uses the same format as a Bedrock Converse API response
+     * with stopReason="end_turn".
+     */
+    @VisibleForTesting
     MLTaskResponse createFinalAnswerResponse(String text) {
         Map<String, Object> wrappedResponse = Map
             .of(
