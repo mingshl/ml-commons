@@ -106,6 +106,10 @@ dependencies {
     opensearchPlugin "org.opensearch.plugin:opensearch-job-scheduler:${opensearch_build}@zip"
     opensearchPlugin "org.opensearch.plugin:opensearch-security:${opensearch_build}@zip"
 
+    if (System.getProperty("search.relevance") == "true") {
+        opensearchPlugin "org.opensearch.plugin:opensearch-ubi:${opensearch_build}@zip"
+    }
+
     implementation group: 'org.opensearch', name: 'opensearch', version: "${opensearch_version}"
     implementation "org.opensearch.client:opensearch-rest-client:${opensearch_version}"
     // Multi-tenant SDK Client
@@ -292,6 +296,7 @@ ext.resolvePluginFile = { pluginId ->
 
 def jobSchedulerFile  = resolvePluginFile("opensearch-job-scheduler")
 def securityPluginFile = resolvePluginFile("opensearch-security")
+def ubiFile = System.getProperty("search.relevance") == "true" ? resolvePluginFile("opensearch-ubi") : null
 
 // Single authoritative cluster definition
 testClusters.integTest {
@@ -356,6 +361,27 @@ testClusters.integTest {
                 }
             }
         }))
+    }
+
+    // Search Relevance + UBI setup - enable with -Dsearch.relevance=true
+    if (System.getProperty("search.relevance") == "true") {
+        def searchRelevanceDir = file("${project.rootDir}/../search-relevance/build/distributions")
+        def searchRelevancePlugin = searchRelevanceDir.exists() ? searchRelevanceDir.listFiles()?.find { it.name.endsWith('.zip') && it.name.contains(opensearch_build) } : null
+        if (!searchRelevancePlugin) {
+            throw new GradleException("opensearch-search-relevance plugin not found. Build it first: cd ${project.rootDir}/../search-relevance && ./gradlew assemble")
+        }
+        plugin(provider(new Callable<RegularFile>() {
+            @Override
+            RegularFile call() throws Exception {
+                return new RegularFile() {
+                    @Override
+                    File getAsFile() {
+                        return searchRelevancePlugin
+                    }
+                }
+            }
+        }))
+        plugin(provider(ubiFile))
     }
 
     configureClusterPlugins(delegate, jobSchedulerFile, securityPluginFile, securityEnabled)
